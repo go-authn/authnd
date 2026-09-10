@@ -42,10 +42,42 @@ type config struct {
 	// listener that is not on the network.
 	PublishNTHash bool `hcl:"publish_nt_hash,optional"`
 
+	// MFA, when present, is what a person's bind must carry beyond a password.
+	MFA *mfaBlock `hcl:"mfa,block"`
+
 	Readers     []readerBlock  `hcl:"reader,block"`
 	Users       []userBlock    `hcl:"user,block"`
 	Groups      []groupBlock   `hcl:"group,block"`
 	Directories []hcldir.Block `hcl:"users,block"`
+}
+
+// An mfaBlock asks for more than a password at a bind.
+//
+// LDAP's simple bind carries one field, so the code goes on the END of the
+// password -- "hunter2314159" -- which is what every appliance doing this
+// does. There is nowhere else to put it: no round trip, no extra field, and a
+// client that speaks LDAP will not learn one.
+type mfaBlock struct {
+	// Factors is how many must be satisfied. 2 is the point of the block;
+	// 1 means a password alone and is refused as a configuration that says
+	// something it does not mean.
+	Factors int `hcl:"factors,optional"`
+	// DistinctKinds requires them to be of different kinds -- what
+	// "two-factor" is normally taken to mean, and what stops two things a
+	// person KNOWS from counting as two.
+	DistinctKinds bool `hcl:"distinct_kinds,optional"`
+	// Digits is how many digits the codes have. 0 means 6.
+	Digits int `hcl:"digits,optional"`
+	// Period is how many seconds one code lasts. 0 means 30.
+	Period int `hcl:"period,optional"`
+	// Window is how many steps either side of now are accepted, for clocks
+	// that differ. 0 means 1 -- and each step is a step of somebody else's
+	// guessing time, so it is a number to set deliberately.
+	Window int `hcl:"window,optional"`
+	// Readers says whether the reader accounts must carry a code too. They
+	// are service accounts with no phone, so they do not by default -- and a
+	// site that gives one an authenticator can say so.
+	Readers bool `hcl:"readers,optional"`
 }
 
 // A readerBlock is a service account that may SEARCH.
@@ -58,6 +90,9 @@ type readerBlock struct {
 	DN           string `hcl:"dn,label"`
 	Password     string `hcl:"password,optional"`
 	PasswordFile string `hcl:"password_file,optional"`
+	// TOTPSecret is a one-time-code secret in base32, for a service account
+	// that carries one. Only asked for when the mfa block says readers do.
+	TOTPSecret string `hcl:"totp_secret,optional"`
 }
 
 // A userBlock is somebody written down here rather than in a directory: a
@@ -69,6 +104,9 @@ type userBlock struct {
 	// NTHash is MD4(UTF16LE(password)), in the 32 hex characters a directory
 	// publishes it as -- for a site that holds THAT and not the password.
 	NTHash string `hcl:"nt_hash,optional"`
+	// TOTPSecret is the base32 secret behind this person's one-time codes.
+	// ⛔ It IS the second factor: whoever holds it produces every future code.
+	TOTPSecret string `hcl:"totp_secret,optional"`
 	// AuthorizedKeys are published as sshPublicKey, for whatever reads them.
 	AuthorizedKeys     []string `hcl:"authorized_keys,optional"`
 	AuthorizedKeysFile string   `hcl:"authorized_keys_file,optional"`
@@ -204,6 +242,11 @@ func (c *config) check() error {
 				return fmt.Errorf("user %q: %w", u.Name, err)
 			}
 		}
+		if u.TOTPSecret != "" {
+			if _, err := directory.ParseTOTPSecret(u.TOTPSecret); err != nil {
+				return fmt.Errorf("user %q: %w", u.Name, err)
+			}
+		}
 	}
 
 	groups := map[string]bool{}
@@ -216,6 +259,22 @@ func (c *config) check() error {
 			// A group with nobody in it grants nothing, and a configuration
 			// that grants nothing to nobody reads exactly like one that works.
 			return fmt.Errorf("group %q has no members", g.Name)
+		}
+	}
+
+	if m := c.MFA; m != nil {
+		switch {
+		case m.Factors == 1:
+			return fmt.Errorf("mfa { factors = 1 } is a password and nothing else: remove the block, or ask for 2")
+		case m.Factors < 0:
+			return fmt.Errorf("mfa { factors = %d } accepts anyone", m.Factors)
+		case m.Factors > 2:
+			// There are two things an LDAP bind can carry, and no third.
+			return fmt.Errorf("mfa { factors = %d }: a bind carries a password and a code, which is 2", m.Factors)
+		case m.Digits != 0 && (m.Digits < 6 || m.Digits > 10):
+			return fmt.Errorf("mfa { digits = %d }: RFC 4226 allows 6 to 10", m.Digits)
+		case m.Period < 0 || m.Window < 0:
+			return fmt.Errorf("mfa: a period of %d seconds and a window of %d steps", m.Period, m.Window)
 		}
 	}
 

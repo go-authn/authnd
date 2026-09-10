@@ -86,6 +86,57 @@ publish_nt_hash needs cert_file and key_file: an NT hash IS the credential,
 and 0.0.0.0:3893 is not loopback, so it would cross a network in the clear
 ```
 
+## A second factor, over a protocol with one field
+
+LDAP's simple bind carries a name and a password and nothing else — no place
+for a code, no round trip to ask for one, and a client that speaks LDAP will
+not learn one. So the code goes on the **end** of the password, which is what
+every appliance that has ever done this does, and what people already know how
+to type:
+
+```
+password:  hunter2314159
+           ^^^^^^^ ^^^^^^
+           password  the six digits on their phone
+```
+
+```hcl
+mfa {
+  factors        = 2
+  distinct_kinds = true     # two things they KNOW are not two factors
+}
+
+user "tess" {
+  password    = "…"
+  totp_secret = "JBSWY3DPEHPK3PXP"   # ⛔ this IS the second factor
+}
+```
+
+The secret can equally come from a database column or an LDAP attribute — see
+[go-authn/directory](https://github.com/go-authn/directory), where it is a
+credential like any other. The checking is
+[go-authn/totp](https://github.com/go-authn/totp)'s.
+
+What follows from the one field, since none of it is obvious:
+
+- **The split is by length.** The last N characters are the code. A password
+  ending in digits is fine; a field *shorter* than a code is refused rather
+  than guessed at, because a short password cannot be told apart from a code.
+- **Both halves are always checked.** Returning early on a wrong password would
+  say, in the time taken, which half was wrong.
+- **A code is used once.** It is valid for a whole step, so a server that
+  accepts one twice accepts a replay — and every step up to the last accepted
+  one is refused, not merely the same one.
+- **Nobody enrolled is not a refusal.** A person with no secret has answered
+  nothing rather than answered wrongly, and the server's own output says
+  *nobody enrolled an authenticator for this person* while the client is told
+  only that the bind failed.
+- **Readers do not carry a code** unless `mfa { readers = true }`: a service
+  account has no phone. One that does gets a `totp_secret` of its own.
+
+`check` lists who cannot bind under the policy, which is the question to ask
+before turning it on.
+
 ## `check`, before you restart something people log in through
 
 ```
@@ -165,9 +216,6 @@ links.
 
 ## Not yet
 
-- **Multi-factor.** The seam is [go-authn/mfa](https://github.com/go-authn/mfa);
-  what an LDAP bind can carry in-band is a password with a code appended, which
-  is what every appliance does and is not written here yet.
 - **OIDC.** A token verified into an identity, for the things that speak that
   instead.
 - **Writes.** Nothing here modifies anything: `add`, `modify` and `delete` are

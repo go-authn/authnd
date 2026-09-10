@@ -4,7 +4,7 @@ go 1.26.4
 
 require (
 	github.com/glauth/ldap v0.0.0-20260718202943-34c5f9b3cbf1
-	github.com/go-authn/directory v0.3.1
+	github.com/go-authn/directory v0.4.0
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/hashicorp/hcl/v2 v2.24.0
 	github.com/jackc/pgx/v5 v5.11.0
@@ -21,6 +21,8 @@ require (
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-asn1-ber/asn1-ber v1.5.8 // indirect
+	github.com/go-authn/mfa v0.2.0 // indirect
+	github.com/go-authn/totp v0.1.0 // indirect
 	github.com/go-ldap/ldap/v3 v3.4.14 // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect

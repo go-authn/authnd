@@ -21,6 +21,12 @@ github.com/go-asn1-ber/asn1-ber v1.5.8 h1:H9AZkK22UOmfX8J84ubyaZxKJZ3FMHVwn8swoM
 github.com/go-asn1-ber/asn1-ber v1.5.8/go.mod h1:hEBeB/ic+5LoWskz+yKT7vGhhPYkProFKoKdwZRWMe0=
 github.com/go-authn/directory v0.3.1 h1:xZ+s6JvQgfLMJFda1QWVK8v+JEl5zq1T10MaM/iIfzE=
 github.com/go-authn/directory v0.3.1/go.mod h1:X5vrdICze4fXF44SCmPw1zV08GgYD8beu0hHbMDByjk=
+github.com/go-authn/directory v0.4.0 h1:Q0M+9IWVBBEyyIHDleLQCwBWEZPEy+cR7RuoZyp26B4=
+github.com/go-authn/directory v0.4.0/go.mod h1:X5vrdICze4fXF44SCmPw1zV08GgYD8beu0hHbMDByjk=
+github.com/go-authn/mfa v0.2.0 h1:2YjN7hicBE6KaOi8/7ZOiBxT7/kt4/hCyErf8EBFAv4=
+github.com/go-authn/mfa v0.2.0/go.mod h1:wPN7SA2sguNCNUjePafkN6BvO9LFc82PRR3bLwboR6I=
+github.com/go-authn/totp v0.1.0 h1:pCCCSzm/rcrJ8pHa/TQ5w5DyoHq1bX6YNg10mIRB9R4=
+github.com/go-authn/totp v0.1.0/go.mod h1:EoEwIizx8zKFAC3JkJXs9+gJT7ezoi32+iWHpeqgkhE=
 github.com/go-ldap/ldap/v3 v3.4.14 h1:D6PYdEgsaVzsXyr6w/yDC06Ria4uUhWm+Rb+er8lfAs=
 github.com/go-ldap/ldap/v3 v3.4.14/go.mod h1:S4eJUMUNjDkE0ZJtIZdybwyb03sGGLW6gxXT1Hs8VKA=
 github.com/go-sql-driver/mysql v1.10.1 h1:arlSnNLq6a5yxGxV7qg9lF4j0C+KwD6NbQyKr9QL6ME=
