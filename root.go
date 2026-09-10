@@ -175,7 +175,23 @@ func report(cmd *cobra.Command, cfg *config) error {
 			g, list(strangers[g]), plural(len(strangers[g]), "has no entry", "have no entries"))
 	}
 
-	fmt.Fprintln(out)
+	// What a bind must carry, and who cannot satisfy it. A policy of two
+	// factors and a person with one is a person who cannot log in, and that
+	// is worth knowing before the restart rather than after it.
+	fmt.Fprintf(out, "\na bind carries %s\n", describePolicy(srv.policy, srv.mfaDigits()))
+	if srv.wantsCode() {
+		var without []string
+		for _, id := range srv.sorted() {
+			if !id.Can(directory.TOTPSecret) {
+				without = append(without, id.Name())
+			}
+		}
+		if len(without) > 0 {
+			fmt.Fprintf(out, "%s %s no second factor here, and cannot bind while one is required\n",
+				list(without), plural(len(without), "has", "have"))
+		}
+	}
+
 	if len(srv.readers) == 0 {
 		fmt.Fprintln(out, "no reader is declared: nothing may search, and every bind still works")
 	} else {
@@ -211,6 +227,9 @@ func proves(id *directory.Identity) string {
 	}
 	if n := len(id.Keys()); n > 0 {
 		have = append(have, fmt.Sprintf("%d %s", n, plural(n, "key", "keys")))
+	}
+	if id.Can(directory.TOTPSecret) {
+		have = append(have, "a one-time-code secret")
 	}
 	if len(have) == 0 {
 		return "nothing"

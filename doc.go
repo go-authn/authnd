@@ -28,6 +28,15 @@
 //     that person over NTLMv2. So publishing it needs TLS -- or a listener
 //     that is not on the network at all.
 //
+// # A second factor, over a protocol with one field
+//
+// An LDAP simple bind carries a name and a password and nothing else. So a
+// code goes on the END of the password -- "hunter2314159" -- which is what
+// every appliance doing this does. The split is by length, both halves are
+// always checked so the time taken says nothing about which was wrong, and a
+// code is accepted once: it is valid for a whole step, and a server that takes
+// it twice takes a replay.
+//
 // # The awkward half, said once
 //
 // NTLMv2 needs the password or its MD4, so a file server asking authnd about

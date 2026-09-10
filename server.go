@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"crypto/subtle"
 	"crypto/tls"
 	"encoding/hex"
@@ -11,9 +12,12 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/go-authn/directory"
 	"github.com/go-authn/directory/hcldir"
+	"github.com/go-authn/mfa"
+	"github.com/go-authn/totp"
 
 	ldap "github.com/glauth/ldap"
 )
@@ -29,8 +33,18 @@ type server struct {
 	// github.com/go-authn/directory, which is where that decision lives.
 	who     map[string]*directory.Identity
 	readers map[string]string // bind DN, lower-cased, to password
+	// readerSecrets is the one-time-code secret for a reader that carries
+	// one. A service account usually has no phone, so this is usually empty
+	// and the mfa block says whether readers are asked at all.
+	readerSecrets map[string][]byte
 
 	peopleDN, groupsDN string
+
+	// policy is what a bind must satisfy, and codes remembers which one-time
+	// codes have been used -- a code is valid for a whole step, so a server
+	// that accepts one twice accepts a replay.
+	policy mfa.Policy
+	codes  *totp.Verifier
 
 	ldap *ldap.Server
 	ln   net.Listener
@@ -45,10 +59,22 @@ type server struct {
 func open(cfg *config, out io.Writer) (*server, error) {
 	s := &server{
 		cfg: cfg, out: out,
-		who:      map[string]*directory.Identity{},
-		readers:  map[string]string{},
-		peopleDN: "ou=people," + cfg.BaseDN,
-		groupsDN: "ou=groups," + cfg.BaseDN,
+		who:           map[string]*directory.Identity{},
+		readers:       map[string]string{},
+		readerSecrets: map[string][]byte{},
+		peopleDN:      "ou=people," + cfg.BaseDN,
+		groupsDN:      "ou=groups," + cfg.BaseDN,
+	}
+	if m := cfg.MFA; m != nil {
+		s.policy = mfa.Policy{Count: m.Factors, DistinctKinds: m.DistinctKinds}
+		if s.policy.Count == 0 {
+			s.policy.Count = 2
+		}
+		s.codes = &totp.Verifier{Options: totp.Options{
+			Digits: m.Digits,
+			Period: time.Duration(m.Period) * time.Second,
+			Window: m.Window,
+		}}
 	}
 	for _, r := range cfg.Readers {
 		pw, err := secret(r.Password, r.PasswordFile, "reader "+r.DN)
@@ -56,6 +82,13 @@ func open(cfg *config, out io.Writer) (*server, error) {
 			return nil, err
 		}
 		s.readers[strings.ToLower(r.DN)] = pw
+		if r.TOTPSecret != "" {
+			secret, err := directory.ParseTOTPSecret(r.TOTPSecret)
+			if err != nil {
+				return nil, fmt.Errorf("reader %q: %w", r.DN, err)
+			}
+			s.readerSecrets[strings.ToLower(r.DN)] = secret
+		}
 	}
 
 	local, err := s.localSource()
@@ -112,6 +145,13 @@ func (s *server) localSource() (directory.Source, error) {
 				return nil, fmt.Errorf("user %q: %w", u.Name, err)
 			}
 			opts = append(opts, directory.WithNTHash(hash))
+		}
+		if u.TOTPSecret != "" {
+			secret, err := directory.ParseTOTPSecret(u.TOTPSecret)
+			if err != nil {
+				return nil, fmt.Errorf("user %q: %w", u.Name, err)
+			}
+			opts = append(opts, directory.WithTOTPSecret(secret))
 		}
 		keys, err := authorizedKeys(u)
 		if err != nil {
@@ -241,6 +281,11 @@ func (s *server) Bind(bindDN, password string, _ net.Conn) (ldap.LDAPResultCode,
 		return ldap.LDAPResultInvalidCredentials, nil
 	}
 	if want, ok := s.readers[strings.ToLower(bindDN)]; ok {
+		// A reader is a service account with no phone, so it carries a code
+		// only where the configuration says its readers do.
+		if s.wantsCode() && s.cfg.MFA.Readers {
+			return s.bindWithCode(bindDN, password, s.readerFactors(bindDN, want))
+		}
 		// Constant time: the comparison is against a secret, and the
 		// difference between "wrong at byte 1" and "wrong at byte 12" is
 		// measurable over a network.
@@ -257,13 +302,90 @@ func (s *server) Bind(bindDN, password string, _ net.Conn) (ldap.LDAPResultCode,
 	if !ok {
 		return ldap.LDAPResultInvalidCredentials, nil
 	}
+	if s.wantsCode() {
+		factors, err := s.factorsFor(id, password)
+		if err != nil {
+			// Said to the SERVER's own output, not to the client: somebody who
+			// has not proved who they are is told that the bind failed and
+			// nothing else.
+			s.refused(name, err)
+			return ldap.LDAPResultInvalidCredentials, nil
+		}
+		return s.decide(name, factors)
+	}
 	// The identity answers, whichever way its source can: a comparison here,
 	// or a bind against the directory that holds the password and will not
 	// give it up.
-	if err := id.Verify(password); err != nil {
+	if err := verifyPassword(id, password); err != nil {
 		return ldap.LDAPResultInvalidCredentials, nil
 	}
 	return ldap.LDAPResultSuccess, nil
+}
+
+// bindWithCode is the reader's version: the same policy, over a password this
+// server holds rather than an identity a directory answers for.
+func (s *server) bindWithCode(who, given string, make func(string) ([]mfa.Factor, error)) (ldap.LDAPResultCode, error) {
+	factors, err := make(given)
+	if err != nil {
+		s.refused(who, err)
+		return ldap.LDAPResultInvalidCredentials, nil
+	}
+	return s.decide(who, factors)
+}
+
+// decide asks the policy and turns its answer into an LDAP result.
+//
+// The client is told one thing -- invalid credentials -- whichever factor
+// refused. WHICH one is a fact about the account, and telling somebody who has
+// not proved anything narrows their next guess.
+func (s *server) decide(who string, factors []mfa.Factor) (ldap.LDAPResultCode, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	r, err := mfa.Verify(ctx, s.policy, factors...)
+	if err != nil {
+		// The RESULT carries what each factor said, and a factor that could
+		// not be asked keeps its reason in its own error -- mfa's summary
+		// renders that as "not available", which is true and not actionable.
+		// An administrator reading this wants "nobody enrolled an
+		// authenticator for this person".
+		s.refused(who, err)
+		for _, a := range r.Answers {
+			if a.Unavailable() {
+				fmt.Fprintf(s.out, "  %s: %v\n", a.Name, a.Err)
+			}
+		}
+		return ldap.LDAPResultInvalidCredentials, nil
+	}
+	return ldap.LDAPResultSuccess, nil
+}
+
+// refused writes why a bind failed where an administrator can read it, and
+// nowhere a client can.
+func (s *server) refused(who string, err error) {
+	fmt.Fprintf(s.out, "%s was refused: %v\n", who, err)
+}
+
+// readerFactors is the password this server holds, plus the code, for a
+// service account the configuration asked to carry one.
+func (s *server) readerFactors(dn, want string) func(string) ([]mfa.Factor, error) {
+	return func(given string) ([]mfa.Factor, error) {
+		digits := s.mfaDigits()
+		password, code, ok := splitCode(given, digits)
+		if !ok {
+			return nil, fmt.Errorf("what was typed is %d characters, and the last %d of it are the code",
+				len(given), digits)
+		}
+		secret := s.readerSecrets[strings.ToLower(dn)]
+		return []mfa.Factor{
+			knowledge{name: "the reader password", verify: func(given string) error {
+				if !constantTimeEqual(given, want) {
+					return fmt.Errorf("wrong")
+				}
+				return nil
+			}, given: password},
+			totp.Factor(dn, secret, []byte(code), s.codes),
+		}, nil
+	}
 }
 
 // Search answers a reader, and nobody else.

@@ -94,3 +94,14 @@ func list(names []string) string {
 	}
 	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
+
+// mfaDigits is how long a code is here.
+func (s *server) mfaDigits() int {
+	if s.cfg.MFA != nil && s.cfg.MFA.Digits != 0 {
+		return s.cfg.MFA.Digits
+	}
+	return 6
+}
+
+// wantsCode reports whether this bind must carry one.
+func (s *server) wantsCode() bool { return s.policy.Count >= 2 }
