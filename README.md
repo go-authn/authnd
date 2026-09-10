@@ -216,8 +216,14 @@ links.
 
 ## Not yet
 
-- **OIDC.** A token verified into an identity, for the things that speak that
-  instead.
+- **OIDC at the bind.** [go-authn/oidc](https://github.com/go-authn/oidc)
+  verifies a token into an identity, and
+  [go-fileshare/fileshare](https://github.com/go-fileshare/fileshare) accepts
+  one over WebDAV — but a bind carries a name and a password, and the only
+  place a token could go is the password field. Some appliances do exactly
+  that. It is not written here, because the shape needs deciding rather than
+  guessing: a token in the password field cannot also carry the code the `mfa`
+  block splits off the end.
 - **Writes.** Nothing here modifies anything: `add`, `modify` and `delete` are
   answered by the library's default, which refuses them. A directory this
   server fronts is edited where it lives.
