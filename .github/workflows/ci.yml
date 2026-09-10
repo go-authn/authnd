@@ -1,0 +1,151 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: "off"
+  CGO_ENABLED: "0"
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          check-latest: true
+          cache: true
+      # OpenLDAP's own client, as a judge for the LDAP directory this module
+      # tests against: a fixture read only by the client in this same module
+      # could confirm a misreading of the protocol rather than the protocol.
+      # macOS ships it; Windows has none, and those tests skip there.
+      - name: ldap-utils
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y ldap-utils
+      - run: go vet ./...
+      - name: gofmt
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          unformatted=$(gofmt -l $(git ls-files '*.go'))
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files are not gofmt-clean:"; echo "$unformatted"; exit 1
+          fi
+      - run: go test -count=1 ./...
+
+  install:
+    name: go install @latest works
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with: { go-version: stable, check-latest: true, cache: true }
+      # A `replace` directive makes `go install pkg@version` refuse outright.
+      # This is a COMMAND: a module nobody can install is a command nobody has.
+      - run: |
+          if grep -q '^replace ' go.mod; then
+            echo "::error::go.mod has a replace directive; go install ...@latest would refuse this module"
+            exit 1
+          fi
+          go build ./...
+
+  tags:
+    name: build tags (${{ matrix.tags }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tags: [nosql, noldap, "nosql,noldap"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with: { go-version: stable, check-latest: true, cache: true }
+      # hcldir carries the tags a PROGRAM uses to leave out a database driver
+      # or an LDAP client. They have to keep building here, or the program
+      # that sets them finds out instead.
+      # A tag that leaves a kind of directory out must leave a program that
+      # still builds, still passes its tests, and is SMALLER -- the last one is
+      # the point, so it is measured rather than assumed.
+      - run: |
+          go build -tags "${{ matrix.tags }}" -o /tmp/tagged .
+          go build -o /tmp/full .
+          full=$(stat -c%s /tmp/full); cut=$(stat -c%s /tmp/tagged)
+          echo "everything: $((full/1024)) KiB   -tags ${{ matrix.tags }}: $((cut/1024)) KiB"
+          [ "$cut" -lt "$full" ] || { echo "::error::the tagged build is not smaller"; exit 1; }
+      - run: go vet -tags "${{ matrix.tags }}" ./... && go test -tags "${{ matrix.tags }}" -count=1 ./...
+
+  race:
+    name: race detector
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with: { go-version: stable, check-latest: true, cache: true }
+      - run: go test -race -count=1 ./...
+
+  coverage:
+    name: coverage floor (75%, standard is 100%)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with: { go-version: stable, check-latest: true, cache: true }
+      - run: |
+          # THE ORG STANDARD IS 100%, AND THIS PROGRAM DOES NOT MEET IT.
+          # What is missing is mostly the signal handling in serve(): a test
+          # that sent this process a SIGTERM would end the run it is part of.
+          FLOOR=75.0
+          go test -coverprofile=cover.out -coverpkg=./... ./... >/dev/null
+          go tool cover -func=cover.out
+          cov=$(go tool cover -func=cover.out | tail -1 | awk '{print $3}' | tr -d '%')
+          echo "coverage: ${cov}%  floor: ${FLOOR}%  standard: 100%"
+          # Written as an `if` rather than `awk ... && { ... }`: in that form
+          # the LIST's status is awk's, and when it is the last line of the
+          # script the step inherits it -- so a lane that is comfortably above
+          # its floor fails, saying nothing about why. It cost a run here.
+          if awk -v c="$cov" -v f="$FLOOR" 'BEGIN{exit !(c+0 < f+0)}'; then
+            echo "::error::coverage ${cov}% fell below the recorded floor ${FLOOR}%"
+            exit 1
+          fi
+          awk -v c="$cov" 'BEGIN{if (c+0 < 100) printf "::warning::%.1f points short of the 100%% standard\n", 100-c}'
+
+  arches:
+    name: arch ${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64, riscv64, loong64, ppc64le, s390x]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with: { go-version: stable, check-latest: true, cache: true }
+      - run: GOARCH=${{ matrix.goarch }} go build ./...
+      - name: Install qemu-user-static
+        if: matrix.goarch != 'amd64' && matrix.goarch != 'arm64'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user-static
+      - name: Test
+        run: |
+          case "${{ matrix.goarch }}" in
+            amd64|arm64) go test -count=1 ./... ;;
+            riscv64)  GOARCH=riscv64 go test -count=1 -exec=qemu-riscv64-static ./... ;;
+            loong64)  GOARCH=loong64 go test -count=1 -exec=qemu-loongarch64-static ./... ;;
+            ppc64le)  GOARCH=ppc64le go test -count=1 -exec=qemu-ppc64le-static ./... ;;
+            s390x)    GOARCH=s390x   go test -count=1 -exec=qemu-s390x-static ./... ;;
+          esac

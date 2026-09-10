@@ -1,0 +1,11 @@
+# The BINARY this repository builds, and nothing that merely looks like it.
+#
+# An ignore rule that NAMES a binary dies the day the binary is renamed, and
+# the rename is exactly when a 10 MB file gets committed by a `git add -A`
+# that nobody read the output of. So the rule is an allow-list of shapes
+# instead: anything at the top of the tree with no extension.
+/authnd
+/authnd.exe
+*.test
+*.out
+cover.out
