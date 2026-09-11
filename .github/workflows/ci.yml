@@ -24,7 +24,7 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
           check-latest: true
@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with: { go-version: stable, check-latest: true, cache: true }
       # A `replace` directive makes `go install pkg@version` refuse outright.
       # This is a COMMAND: a module nobody can install is a command nobody has.
@@ -72,7 +72,7 @@ jobs:
         tags: [nosql, noldap, "nosql,noldap"]
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with: { go-version: stable, check-latest: true, cache: true }
       # hcldir carries the tags a PROGRAM uses to leave out a database driver
       # or an LDAP client. They have to keep building here, or the program
@@ -95,7 +95,7 @@ jobs:
       CGO_ENABLED: "1"
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with: { go-version: stable, check-latest: true, cache: true }
       # ⛔ The judge has to be here too. It was in the `test` lane and nowhere
       # else, so every test that needs OpenLDAP's client SKIPPED in this one
@@ -110,7 +110,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with: { go-version: stable, check-latest: true, cache: true }
       # ⛔ The judge has to be here too. It was in the `test` lane and nowhere
       # else, so every test that needs OpenLDAP's client SKIPPED in this one
@@ -146,7 +146,7 @@ jobs:
         goarch: [amd64, arm64, riscv64, loong64, ppc64le, s390x]
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with: { go-version: stable, check-latest: true, cache: true }
       - run: GOARCH=${{ matrix.goarch }} go build ./...
       - name: Install qemu-user-static
