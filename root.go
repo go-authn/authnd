@@ -165,6 +165,8 @@ func report(cmd *cobra.Command, cfg *config) error {
 			return err
 		}
 	}
+	kerberosReport(out, cfg, srv.sorted())
+
 	// A group naming somebody no source here has an entry for. Published as
 	// it stands -- memberUid is a string, and a proxy in front of one system
 	// legitimately carries names another one owns -- but said out loud,

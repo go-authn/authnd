@@ -4,14 +4,24 @@ go 1.26.4
 
 require (
 	github.com/glauth/ldap v0.0.0-20260718202943-34c5f9b3cbf1
-	github.com/go-authn/directory v0.4.0
+	github.com/go-authn/directory v0.5.0
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/hashicorp/hcl/v2 v2.24.0
 	github.com/jackc/pgx/v5 v5.11.0
+	github.com/jcmturner/gokrb5/v8 v8.4.4
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	golang.org/x/crypto v0.57.0
 	modernc.org/sqlite v1.58.0
+)
+
+require (
+	github.com/hashicorp/go-uuid v1.0.3 // indirect
+	github.com/jcmturner/aescts/v2 v2.0.0 // indirect
+	github.com/jcmturner/dnsutils/v2 v2.0.0 // indirect
+	github.com/jcmturner/gofork v1.7.6 // indirect
+	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
+	golang.org/x/net v0.58.0 // indirect
 )
 
 require (
@@ -21,8 +31,9 @@ require (
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-asn1-ber/asn1-ber v1.5.8 // indirect
-	github.com/go-authn/mfa v0.2.0 // indirect
-	github.com/go-authn/totp v0.1.0 // indirect
+	github.com/go-authn/kdc v0.1.0
+	github.com/go-authn/mfa v0.2.0
+	github.com/go-authn/totp v0.1.0
 	github.com/go-ldap/ldap/v3 v3.4.14 // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect

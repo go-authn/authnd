@@ -36,6 +36,11 @@ jobs:
       - name: ldap-utils
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y ldap-utils
+      - name: MIT Kerberos
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          curl -fsS https://pkgx.sh | sh
+          pkgx +kerberos.org -- klist -V
       - run: go vet ./...
       - name: gofmt
         if: matrix.os == 'ubuntu-latest'
@@ -46,6 +51,8 @@ jobs:
             echo "::error::these files are not gofmt-clean:"; echo "$unformatted"; exit 1
           fi
       - run: go test -count=1 ./...
+        env:
+          AUTHND_REQUIRE_JUDGE: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
 
   install:
     name: go install @latest works
@@ -86,7 +93,13 @@ jobs:
           full=$(stat -c%s /tmp/full); cut=$(stat -c%s /tmp/tagged)
           echo "everything: $((full/1024)) KiB   -tags ${{ matrix.tags }}: $((cut/1024)) KiB"
           [ "$cut" -lt "$full" ] || { echo "::error::the tagged build is not smaller"; exit 1; }
-      - run: go vet -tags "${{ matrix.tags }}" ./... && go test -tags "${{ matrix.tags }}" -count=1 ./...
+      - name: MIT Kerberos
+        run: |
+          curl -fsS https://pkgx.sh | sh
+          pkgx +kerberos.org -- klist -V
+      - env:
+          AUTHND_REQUIRE_JUDGE: "1"
+        run: go vet -tags "${{ matrix.tags }}" ./... && go test -tags "${{ matrix.tags }}" -count=1 ./...
 
   race:
     name: race detector
@@ -103,7 +116,16 @@ jobs:
       # without a third of the suite.
       - name: ldap-utils
         run: sudo apt-get update && sudo apt-get install -y ldap-utils
+      # ⛔ A judge belongs in EVERY lane that runs the tests. The Kerberos
+      # tests need MIT's client; without it they SKIP, and a skip is not a
+      # failure. Only the CLIENT is borrowed — authnd is the KDC.
+      - name: MIT Kerberos
+        run: |
+          curl -fsS https://pkgx.sh | sh
+          pkgx +kerberos.org -- klist -V
       - run: go test -race -count=1 ./...
+        env:
+          AUTHND_REQUIRE_JUDGE: "1"
 
   coverage:
     name: coverage floor (80%, standard is 100%)
@@ -118,7 +140,15 @@ jobs:
       # measured without a third of the suite: 69.4% instead of 81.7%.
       - name: ldap-utils
         run: sudo apt-get update && sudo apt-get install -y ldap-utils
-      - run: |
+      # The same applies to MIT: without it the Kerberos tests skip, and this
+      # lane would measure a run that never issued a ticket.
+      - name: MIT Kerberos
+        run: |
+          curl -fsS https://pkgx.sh | sh
+          pkgx +kerberos.org -- klist -V
+      - env:
+          AUTHND_REQUIRE_JUDGE: "1"
+        run: |
           # THE ORG STANDARD IS 100%, AND THIS PROGRAM DOES NOT MEET IT.
           # What is missing is mostly the signal handling in serve(): a test
           # that sent this process a SIGTERM would end the run it is part of.
