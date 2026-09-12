@@ -11,6 +11,19 @@
 // searches over go-authn/directory's sources, so that what a database holds
 // can be read by anything that knows how to ask a directory.
 //
+// # A realm, optionally
+//
+// A kerberos block makes this a KDC as well as a directory: the same people,
+// issued tickets instead of only being looked up. It answers on UDP and TCP,
+// requires encrypted-timestamp pre-authentication, and signs its own tickets
+// with the krbtgt key in a keytab — the same file the services read.
+//
+// ⛔ Not every directory can back one. A KDC must DECRYPT the client's
+// pre-authentication with that person's long-term key, so it needs the
+// PASSWORD; a source that only VERIFIES one cannot produce a key. `authnd
+// check` names the people this affects, because the alternative is somebody
+// discovering it when their correct password is reported wrong.
+//
 // # What it refuses, and why
 //
 // An LDAP server is asked to prove people, so the refusals are the design:

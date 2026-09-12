@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-authn/directory"
 	"github.com/go-authn/directory/hcldir"
@@ -41,6 +42,10 @@ type config struct {
 	// through this directory -- and it is a CREDENTIAL, so it needs TLS or a
 	// listener that is not on the network.
 	PublishNTHash bool `hcl:"publish_nt_hash,optional"`
+
+	// Kerberos, when present, makes this a KDC as well as a directory: the
+	// same people, issued tickets instead of only being looked up.
+	Kerberos *kerberosBlock `hcl:"kerberos,block"`
 
 	// MFA, when present, is what a person's bind must carry beyond a password.
 	MFA *mfaBlock `hcl:"mfa,block"`
@@ -286,7 +291,7 @@ func (c *config) check() error {
 	if len(c.Users) == 0 && len(c.Directories) == 0 {
 		return fmt.Errorf("there is nobody here: name a user, or a users block reading a database or a directory")
 	}
-	return nil
+	return c.checkKerberos()
 }
 
 // tls reports whether this server can be spoken to over TLS.
@@ -320,4 +325,77 @@ func secret(inline, file, who string) (string, error) {
 		return "", fmt.Errorf("%s: %w", who, err)
 	}
 	return strings.TrimSpace(string(raw)), nil
+}
+
+// A kerberosBlock turns this server into a KDC for one realm.
+//
+// ⛔ Not every directory can back one, and the difference is structural rather
+// than a matter of configuration. A KDC must DECRYPT the client's
+// pre-authentication with that person's long-term key, so it needs the
+// PASSWORD. A source that only verifies one -- a bind against somebody else's
+// LDAP -- answers "is this the right password" and cannot produce a key.
+//
+// check() says so at startup. The alternative is a realm that starts, accepts
+// a kinit, and answers "password incorrect" to a correct password forever.
+type kerberosBlock struct {
+	// Realm is the realm name, conventionally the DNS domain in capitals.
+	Realm string `hcl:"realm,optional"`
+
+	// Listen is where the KDC answers, on UDP and TCP both. The default is
+	// loopback on 88, the port every client tries; 88 is privileged, so a
+	// server that does not run as root will want a high port and a krb5.conf
+	// that names it.
+	Listen string `hcl:"listen,optional"`
+
+	// Keytab holds the key for krbtgt/REALM, which a KDC signs its own
+	// tickets with, and one key per service it issues tickets to. It is the
+	// same file those services read.
+	Keytab string `hcl:"keytab,optional"`
+
+	// Lifetime caps a ticket, in the form Go parses ("10h"). Empty means ten
+	// hours, which is MIT's default.
+	Lifetime string `hcl:"lifetime,optional"`
+}
+
+// checkKerberos validates the realm block and says what it cannot do.
+func (c *config) checkKerberos() error {
+	k := c.Kerberos
+	if k == nil {
+		return nil
+	}
+	if k.Realm == "" {
+		return fmt.Errorf("kerberos: no realm: a realm has to be named (for example EXAMPLE.ORG)")
+	}
+	if k.Realm != strings.ToUpper(k.Realm) {
+		// Not a rule of the protocol, and universally assumed anyway: a
+		// lower-case realm works here and confuses every client that
+		// canonicalises the name it was given.
+		return fmt.Errorf("kerberos: realm %q is not upper case: clients uppercase the realm they derive "+
+			"from a domain, and would then ask for a realm this server does not answer for", k.Realm)
+	}
+	if k.Keytab == "" {
+		return fmt.Errorf("kerberos: no keytab: a KDC signs its own tickets with krbtgt/%s, "+
+			"and that key lives in a keytab", k.Realm)
+	}
+	if k.Listen == "" {
+		k.Listen = "127.0.0.1:88"
+	}
+	if _, _, err := net.SplitHostPort(k.Listen); err != nil {
+		return fmt.Errorf("kerberos listen: %q is not an address to listen on: %w", k.Listen, err)
+	}
+	if k.Lifetime != "" {
+		if _, err := time.ParseDuration(k.Lifetime); err != nil {
+			return fmt.Errorf("kerberos lifetime %q: %w", k.Lifetime, err)
+		}
+	}
+	return nil
+}
+
+// lifetime resolves the configured ticket lifetime.
+func (k *kerberosBlock) lifetime() time.Duration {
+	d, err := time.ParseDuration(k.Lifetime)
+	if err != nil {
+		return 0 // kdc.Config resolves zero to ten hours.
+	}
+	return d
 }

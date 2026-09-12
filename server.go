@@ -3,11 +3,14 @@
 package main
 
 import (
+	"errors"
+
 	"context"
 	"crypto/subtle"
 	"crypto/tls"
 	"encoding/hex"
 	"fmt"
+	"github.com/go-authn/kdc"
 	"io"
 	"net"
 	"strings"
@@ -48,6 +51,10 @@ type server struct {
 
 	ldap *ldap.Server
 	ln   net.Listener
+
+	// realm is the KDC half, present only when the configuration asks for
+	// one. A directory that issues tickets is still a directory.
+	realm *realm
 
 	mu      sync.Mutex
 	binds   int
@@ -186,6 +193,7 @@ func (s *server) Close() error {
 	case s.ln != nil:
 		s.ln.Close()
 	}
+	s.realm.close()
 	if s.dir != nil {
 		return s.dir.Close()
 	}
@@ -221,10 +229,28 @@ func (s *server) listen() error {
 	s.ln = ln
 	fmt.Fprintf(s.out, "%s on %s, serving %d %s from %s\n",
 		s.scheme(), ln.Addr(), len(s.who), plural(len(s.who), "person", "people"), s.dir.Describe())
+
+	r, err := s.openRealm()
+	if err != nil {
+		s.ln.Close()
+		return err
+	}
+	if r != nil {
+		if err := r.listen(); err != nil {
+			s.ln.Close()
+			return err
+		}
+		s.realm = r
+		fmt.Fprintf(s.out, "realm %s on %s (udp and tcp)\n", r.cfg.Realm, r.cfg.Listen)
+	}
 	return nil
 }
 
 // serve answers until Close is called.
+//
+// The directory and the realm are equals: whichever stops first ends this,
+// because a server that kept answering LDAP after its KDC died would look
+// healthy to everything that does not speak Kerberos.
 func (s *server) serve() error {
 	s.mu.Lock()
 	if s.closed {
@@ -232,8 +258,26 @@ func (s *server) serve() error {
 		return nil
 	}
 	s.serving = true
+	r := s.realm
 	s.mu.Unlock()
-	err := s.ldap.Serve(s.ln)
+
+	ldapDone := make(chan error, 1)
+	go func() { ldapDone <- s.ldap.Serve(s.ln) }()
+	// A nil channel blocks forever in a select, which is exactly right when
+	// there is no realm to wait on.
+	var realmDone <-chan error
+	if r != nil {
+		realmDone = r.serve()
+	}
+
+	var err error
+	select {
+	case err = <-ldapDone:
+	case err = <-realmDone:
+		if errors.Is(err, kdc.ErrClosed) {
+			err = nil
+		}
+	}
 	s.mu.Lock()
 	s.serving = false
 	s.mu.Unlock()
@@ -242,7 +286,6 @@ func (s *server) serve() error {
 	}
 	return err
 }
-
 func (s *server) scheme() string {
 	if s.cfg.tls() {
 		return "ldaps"
