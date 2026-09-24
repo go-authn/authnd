@@ -209,11 +209,12 @@ found on the way there: a failed bind left the connection with the *previous*
 bind's authorisation (RFC 4511 4.2.1), and a response carrying any optional
 field was read as a malformed packet.
 
-⛔ It is a **bridge, not a destination**. Five defects turned up in the fifty
-lines of the bind path alone, and its filter evaluator drops everything after
-the first `*` — `(uid=svc-*-prod)` matches `svc-web-stage`, which in a
-directory is disclosure. `go-authn/ldap`, an LDAP server written from
-RFC 4511/4513/4515/7628, replaces it; this dependency is one line.
+⛔ It is a **bridge, not a destination**. Six defects turned up in it, five of
+them in the fifty lines of the bind path — and one, since fixed, was that the
+filter evaluator dropped everything after the first `*`, so `(uid=svc-*-prod)`
+returned `svc-web-stage`. In a directory that is disclosure. `go-authn/ldap`,
+an LDAP server written from RFC 4511/4513/4515/7628, replaces it; this
+dependency is one line.
 
 ## ldaps:// or StartTLS, and not both at once
 

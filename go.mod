@@ -11,7 +11,7 @@ require (
 	github.com/jcmturner/gokrb5/v8 v8.4.4
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
-	github.com/tannevaled/ldap v0.1.0
+	github.com/tannevaled/ldap v0.2.0
 	golang.org/x/crypto v0.57.0
 	modernc.org/sqlite v1.59.0
 )
