@@ -137,6 +137,101 @@ What follows from the one field, since none of it is obvious:
 `check` lists who cannot bind under the policy, which is the question to ask
 before turning it on.
 
+## A token at the bind, in a field that is not the password
+
+[go-authn/oidc](https://github.com/go-authn/oidc) verifies a token into an
+identity. The obvious way to carry one to an LDAP server is the password
+field, and several appliances do exactly that. It works once and then stops:
+the password field is where the `mfa` block above takes the code off the end,
+and a token cannot be both.
+
+So the token goes where the protocol has a place for it. A **SASL** bind's
+credentials are an octet string of the mechanism's own shape, and
+[RFC 7628](https://www.rfc-editor.org/rfc/rfc7628)'s `OAUTHBEARER` shape is a
+GS2 header followed by key/value pairs, one of which is `auth=Bearer <token>`.
+The password field is left alone — which is the whole point:
+
+```hcl
+oidc {
+  issuer   = "https://login.example.org/realms/staff"
+  audience = "ldap"
+
+  # Which claim names the person in THIS directory. The default order is
+  # preferred_username, then email, then sub.
+  username_claim = "preferred_username"
+}
+```
+
+On one listener, at the same time, tess still types her password with this
+second's code on the end of it, and alice sends a token. Neither arrangement
+costs the other anything.
+
+### How many factors is a token?
+
+**Whatever the issuer says it checked, and nothing more.** A token carries
+[RFC 8176](https://www.rfc-editor.org/rfc/rfc8176)'s `amr`: the methods the
+provider used. That is the only evidence there is, so it is what the `mfa`
+policy counts — `["pwd","otp"]` is a password and a one-time code, of two
+distinct kinds, and satisfies `distinct_kinds = true`. A token with no `amr`
+is **one** factor and such a policy refuses it.
+
+The alternative would be this server inventing a second factor nobody
+performed. The trust involved is the same trust the bind already rests on: a
+server that believes the issuer about *who* this is has no separate ground for
+disbelieving it about *how* it checked.
+
+### What it refuses
+
+- **A token in the clear.** A bearer token needs no other half — whoever reads
+  it off the wire is that person until it expires. `allow_plaintext = true`
+  exists for a deployment that terminates TLS in front of this process, which
+  is a statement only that deployment can make.
+- **A request to be somebody else.** The GS2 header may name an `authzid`. A
+  token for alice carrying a request to act as bob is refused, not quietly
+  treated as either.
+- **A token for somebody no source here publishes**, and the client is told
+  only `invalid_token`. Which name exists is not something to hand out one
+  guess at a time; the reason is in this server's own output, where an
+  administrator is.
+- **A mechanism this server does not speak**, with `authMethodNotSupported`
+  rather than `invalidCredentials` — those send a client to different places.
+
+A refusal is [RFC 7628 3.2.3](https://www.rfc-editor.org/rfc/rfc7628#section-3.2.3)'s:
+a JSON error carrying `openid-configuration`, returned as `saslBindInProgress`
+so the client can send the `^A` that ends the exchange.
+
+### The library this needed
+
+`glauth/ldap` refused every SASL bind outright, so there was no field to put a
+token in. [go-authn/ldap](https://github.com/go-authn/ldap) is a fork that
+adds an optional `SASLBinder`, offered back upstream — along with two defects
+found on the way there: a failed bind left the connection with the *previous*
+bind's authorisation (RFC 4511 4.2.1), and a response carrying any optional
+field was read as a malformed packet.
+
+## ldaps:// or StartTLS, and not both at once
+
+```hcl
+starttls  = true            # a plaintext listener, upgraded on request
+cert_file = "/etc/authnd/cert.pem"
+key_file  = "/etc/authnd/key.pem"
+```
+
+Without `starttls`, the listener is `ldaps://`: the handshake happens before a
+byte of LDAP is spoken. With it, the listener is plaintext and a client asks
+to upgrade (RFC 4511 4.14) — which is what a client pointed at 389 with "use
+TLS" ticked does.
+
+It is one or the other and has to be: a listener cannot both require a
+handshake and wait to see whether one is asked for. This used to be documented
+as both at once, which no deployment ever got.
+
+⛔ **StartTLS is asked for by the client**, so merely offering it promises
+nothing. A listener configured for it therefore refuses every bind and every
+search until it has been upgraded, and says `confidentialityRequired`. That is
+what keeps `cert_file` a guarantee rather than an offer — which is what
+`publish_nt_hash` is allowed to rely on.
+
 ## `check`, before you restart something people log in through
 
 ```
@@ -216,14 +311,6 @@ links.
 
 ## Not yet
 
-- **OIDC at the bind.** [go-authn/oidc](https://github.com/go-authn/oidc)
-  verifies a token into an identity, and
-  [go-fileshare/fileshare](https://github.com/go-fileshare/fileshare) accepts
-  one over WebDAV — but a bind carries a name and a password, and the only
-  place a token could go is the password field. Some appliances do exactly
-  that. It is not written here, because the shape needs deciding rather than
-  guessing: a token in the password field cannot also carry the code the `mfa`
-  block splits off the end.
 - **Writes.** Nothing here modifies anything: `add`, `modify` and `delete` are
   answered by the library's default, which refuses them. A directory this
   server fronts is edited where it lives.
