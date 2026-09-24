@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-authn/ldap"
+	"github.com/tannevaled/ldap"
 )
 
 // bindWithToken does one OAUTHBEARER bind against a running server and

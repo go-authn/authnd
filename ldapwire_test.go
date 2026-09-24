@@ -9,7 +9,7 @@ import (
 	"time"
 
 	ber "github.com/go-asn1-ber/asn1-ber"
-	"github.com/go-authn/ldap"
+	"github.com/tannevaled/ldap"
 )
 
 // upgraded dials plainly, asks for StartTLS by hand, and hands back an LDAP

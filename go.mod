@@ -11,6 +11,7 @@ require (
 	github.com/jcmturner/gokrb5/v8 v8.4.4
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
+	github.com/tannevaled/ldap v0.1.0
 	golang.org/x/crypto v0.57.0
 	modernc.org/sqlite v1.59.0
 )
@@ -33,7 +34,6 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-asn1-ber/asn1-ber v1.5.8
 	github.com/go-authn/kdc v0.1.0
-	github.com/go-authn/ldap v0.0.0
 	github.com/go-authn/mfa v0.2.0
 	github.com/go-authn/totp v0.1.0
 	github.com/go-ldap/ldap/v3 v3.4.14 // indirect
@@ -57,6 +57,3 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 )
-
-// TEMPORARY, not for merge: github.com/go-authn/ldap is not pushed yet.
-replace github.com/go-authn/ldap => ../ldap

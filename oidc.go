@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-authn/ldap"
 	"github.com/go-authn/mfa"
 	"github.com/go-authn/oidc"
+	"github.com/tannevaled/ldap"
 )
 
 // OIDC at the bind, in the field a token belongs in.

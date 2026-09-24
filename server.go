@@ -22,7 +22,7 @@ import (
 	"github.com/go-authn/mfa"
 	"github.com/go-authn/totp"
 
-	ldap "github.com/go-authn/ldap"
+	ldap "github.com/tannevaled/ldap"
 )
 
 // A server answers LDAP from the sources a configuration named.

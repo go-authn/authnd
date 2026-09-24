@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-authn/ldap"
+	"github.com/tannevaled/ldap"
 )
 
 // ⛔ cert_file and key_file used to be documented as giving BOTH ldaps:// and

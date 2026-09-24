@@ -203,11 +203,17 @@ so the client can send the `^A` that ends the exchange.
 ### The library this needed
 
 `glauth/ldap` refused every SASL bind outright, so there was no field to put a
-token in. [go-authn/ldap](https://github.com/go-authn/ldap) is a fork that
+token in. [tannevaled/ldap](https://github.com/tannevaled/ldap) is a fork that
 adds an optional `SASLBinder`, offered back upstream — along with two defects
 found on the way there: a failed bind left the connection with the *previous*
 bind's authorisation (RFC 4511 4.2.1), and a response carrying any optional
 field was read as a malformed packet.
+
+⛔ It is a **bridge, not a destination**. Five defects turned up in the fifty
+lines of the bind path alone, and its filter evaluator drops everything after
+the first `*` — `(uid=svc-*-prod)` matches `svc-web-stage`, which in a
+directory is disclosure. `go-authn/ldap`, an LDAP server written from
+RFC 4511/4513/4515/7628, replaces it; this dependency is one line.
 
 ## ldaps:// or StartTLS, and not both at once
 
