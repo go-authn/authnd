@@ -4,7 +4,7 @@ go 1.26.4
 
 require (
 	github.com/glauth/ldap v0.0.0-20260718202943-34c5f9b3cbf1
-	github.com/go-authn/directory v0.5.0
+	github.com/go-authn/directory v0.6.0
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/hashicorp/hcl/v2 v2.25.0
 	github.com/jackc/pgx/v5 v5.11.0
