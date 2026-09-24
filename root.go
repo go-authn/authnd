@@ -181,6 +181,30 @@ func report(cmd *cobra.Command, cfg *config) error {
 	// factors and a person with one is a person who cannot log in, and that
 	// is worth knowing before the restart rather than after it.
 	fmt.Fprintf(out, "\na bind carries %s\n", describePolicy(srv.policy, srv.mfaDigits()))
+	if srv.oidc != nil {
+		// overWhat is not used here: it says "on a loopback listener" when
+		// there is no certificate, which would be a claim about THIS
+		// listener that nothing checked. What protects a token is said by
+		// the allow_plaintext line below, or by the refusal at bind time.
+		where := ""
+		if cfg.tls() {
+			where = overWhat(cfg)
+		}
+		fmt.Fprintf(out, "or a token from %s, over SASL %s%s\n",
+			srv.oidc.cfg.Issuer, oauthBearer, where)
+		if srv.policy.Count >= 2 {
+			// ⛔ Said here because it is the one thing about this that
+			// surprises people: a token is not automatically enough. What
+			// the issuer put in "amr" is the only evidence there is, and a
+			// provider that sends none has said it did one thing.
+			fmt.Fprint(out, "  a token counts for the factors its amr claim names, "+
+				"so one with no amr is refused by this policy\n")
+		}
+		if srv.oidc.cfg.AllowPlaintext {
+			fmt.Fprint(out, "  allow_plaintext is set: a token may cross this socket in the clear, "+
+				"and whoever reads it IS that person until it expires\n")
+		}
+	}
 	if srv.wantsCode() {
 		var without []string
 		for _, id := range srv.sorted() {
@@ -256,7 +280,12 @@ func published(s *server, id *directory.Identity) string {
 // overWhat says what protects the wire, since that is the whole condition
 // under which publishing a credential is defensible.
 func overWhat(cfg *config) string {
-	if cfg.tls() {
+	switch {
+	case cfg.tls() && cfg.StartTLS:
+		// The listener refuses everything until it is upgraded, so this is a
+		// guarantee and not an offer -- see mustUpgrade.
+		return " over TLS, once StartTLS has been asked for"
+	case cfg.tls():
 		return " over TLS"
 	}
 	return " on a loopback listener"

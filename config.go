@@ -32,10 +32,25 @@ type config struct {
 	// ou=people, groups under ou=groups.
 	BaseDN string `hcl:"base_dn,optional"`
 
-	// CertFile and KeyFile turn on TLS: ldaps:// on the listener, and
-	// StartTLS on a plaintext connection.
+	// CertFile and KeyFile turn on TLS.
 	CertFile string `hcl:"cert_file,optional"`
 	KeyFile  string `hcl:"key_file,optional"`
+
+	// StartTLS serves the certificate on a PLAINTEXT listener, to be
+	// upgraded by a client that asks (RFC 4511 4.14), instead of on an
+	// ldaps:// one where the handshake happens before any LDAP at all.
+	//
+	// ⛔ It is one or the other, and it has to be: a listener cannot both
+	// require a handshake and wait to see whether one is asked for. This
+	// used to be documented as both at once, which no deployment ever got --
+	// the listener was wrapped in TLS, so the StartTLS the comment promised
+	// had no plaintext connection left to upgrade.
+	//
+	// Which one a site wants is about its CLIENTS, not about security:
+	// ldaps:// is what most of them are configured for, and StartTLS is what
+	// a client pointed at 389 with "use TLS" ticked will ask for. A site
+	// that needs both runs two of this server.
+	StartTLS bool `hcl:"starttls,optional"`
 
 	// PublishNTHash publishes sambaNTPassword for the people whose source
 	// holds one. It is what lets a Samba or an SMB server authenticate
@@ -49,6 +64,10 @@ type config struct {
 
 	// MFA, when present, is what a person's bind must carry beyond a password.
 	MFA *mfaBlock `hcl:"mfa,block"`
+
+	// OIDC accepts a token at the bind, over SASL OAUTHBEARER. See oidc.go
+	// for why it is not the password field.
+	OIDC *oidcBlock `hcl:"oidc,block"`
 
 	Readers     []readerBlock  `hcl:"reader,block"`
 	Users       []userBlock    `hcl:"user,block"`
@@ -204,6 +223,9 @@ func (c *config) check() error {
 	// NTLMv2 without ever learning the password. Publishing it over a
 	// plaintext socket puts it on the wire for anybody watching, so it takes
 	// TLS -- or a listener that is not on the network at all.
+	if c.StartTLS && !c.tls() {
+		return fmt.Errorf("starttls needs cert_file and key_file: there is nothing to upgrade a connection WITH")
+	}
 	if c.PublishNTHash && !c.tls() && !loopback(c.Listen) {
 		return fmt.Errorf("publish_nt_hash needs cert_file and key_file: an NT hash IS the credential, "+
 			"and %s is not loopback, so it would cross a network in the clear", c.Listen)

@@ -22,7 +22,7 @@ import (
 	"github.com/go-authn/mfa"
 	"github.com/go-authn/totp"
 
-	ldap "github.com/glauth/ldap"
+	ldap "github.com/tannevaled/ldap"
 )
 
 // A server answers LDAP from the sources a configuration named.
@@ -51,6 +51,12 @@ type server struct {
 
 	ldap *ldap.Server
 	ln   net.Listener
+
+	// oidc is the token half, present only when the configuration asks for
+	// one. Without it this server does not implement ldap.SASLBinder's
+	// mechanism at all and every SASL bind is answered
+	// authMethodNotSupported -- see BindSASL.
+	oidc *oidcAuth
 
 	// realm is the KDC half, present only when the configuration asks for
 	// one. A directory that issues tickets is still a directory.
@@ -97,6 +103,15 @@ func open(cfg *config, out io.Writer) (*server, error) {
 			s.readerSecrets[strings.ToLower(r.DN)] = secret
 		}
 	}
+
+	// Discovery happens here, before anything listens: a provider that
+	// cannot be reached should stop a server from starting, where somebody
+	// is watching, rather than refuse every bind later.
+	auth, err := openOIDC(cfg.OIDC)
+	if err != nil {
+		return nil, err
+	}
+	s.oidc = auth
 
 	local, err := s.localSource()
 	if err != nil {
@@ -224,7 +239,13 @@ func (s *server) listen() error {
 		}
 		cfg := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
 		srv.TLSConfig = cfg
-		ln = tls.NewListener(ln, cfg)
+		// One or the other. Wrapping the listener AND setting TLSConfig
+		// reads like belt and braces and is not: the wrapped listener
+		// handshakes before a byte of LDAP is spoken, so the StartTLS the
+		// TLSConfig enables is never reached by anybody.
+		if !s.cfg.StartTLS {
+			ln = tls.NewListener(ln, cfg)
+		}
 	}
 	s.ln = ln
 	fmt.Fprintf(s.out, "%s on %s, serving %d %s from %s\n",
@@ -287,7 +308,10 @@ func (s *server) serve() error {
 	return err
 }
 func (s *server) scheme() string {
-	if s.cfg.tls() {
+	switch {
+	case s.cfg.tls() && s.cfg.StartTLS:
+		return "ldap+starttls"
+	case s.cfg.tls():
 		return "ldaps"
 	}
 	return "ldap"
@@ -309,11 +333,41 @@ func (s *server) Binds() int {
 	return s.binds
 }
 
+// mustUpgrade reports whether this connection has to be protected before
+// anything may be said over it.
+//
+// ⛔ StartTLS is asked for by the CLIENT. A server that merely offers it has
+// promised nothing: a client that does not ask sends its bind password, and
+// receives whatever this server publishes, in the clear -- and everything
+// looks normal at both ends. That is the difference between ldaps://, where
+// the handshake happens before a byte of LDAP, and a plaintext port where it
+// is a request somebody may never make.
+//
+// So a listener configured for StartTLS refuses to work until it has been
+// upgraded. RFC 4513 4.1 has a result code for exactly this, and it is the
+// only thing that makes cert_file a guarantee rather than an offer -- which
+// is what publish_nt_hash is allowed to rely on.
+func (s *server) mustUpgrade(conn net.Conn) bool {
+	if !s.cfg.StartTLS {
+		// ldaps:// handshook before this connection existed, and a site with
+		// no certificate at all made a different decision that is checked
+		// where the configuration is read.
+		return false
+	}
+	_, ok := conn.(*tls.Conn)
+	return !ok
+}
+
 // Bind proves somebody, or does not.
-func (s *server) Bind(bindDN, password string, _ net.Conn) (ldap.LDAPResultCode, error) {
+func (s *server) Bind(bindDN, password string, conn net.Conn) (ldap.LDAPResultCode, error) {
 	s.mu.Lock()
 	s.binds++
 	s.mu.Unlock()
+
+	if s.mustUpgrade(conn) {
+		s.refused(bindDN, fmt.Errorf("this listener serves StartTLS, and nothing asked for it"))
+		return ldap.LDAPResultConfidentialityRequired, nil
+	}
 
 	// ⛔ The unauthenticated bind. RFC 4513 5.1.2: a bind with a name and an
 	// EMPTY password is answered success by a real directory, and it means "I
@@ -432,7 +486,11 @@ func (s *server) readerFactors(dn, want string) func(string) ([]mfa.Factor, erro
 }
 
 // Search answers a reader, and nobody else.
-func (s *server) Search(boundDN string, req ldap.SearchRequest, _ net.Conn) (ldap.ServerSearchResult, error) {
+func (s *server) Search(boundDN string, req ldap.SearchRequest, conn net.Conn) (ldap.ServerSearchResult, error) {
+	if s.mustUpgrade(conn) {
+		return ldap.ServerSearchResult{ResultCode: ldap.LDAPResultConfidentialityRequired},
+			fmt.Errorf("this listener serves StartTLS, and nothing asked for it")
+	}
 	if _, ok := s.readers[strings.ToLower(boundDN)]; !ok {
 		// A directory that answers everybody has published its people to
 		// everybody. Binding proves who you are; reading the list is a
