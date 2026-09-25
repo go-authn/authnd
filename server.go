@@ -402,7 +402,17 @@ func (s *server) Bind(_ context.Context, _ ldap.Session, req *ldap.BindRequest) 
 		if bindDN == "" {
 			return ldap.Result{Code: ldap.Success}, nil
 		}
-		return ldap.Result{Code: ldap.InvalidCredentials}, nil
+		// ⛔ unwillingToPerform, not invalidCredentials. RFC 4513 5.1.2:
+		// "Servers SHOULD by default fail Unauthenticated Bind requests with
+		// a resultCode of unwillingToPerform."
+		//
+		// The difference is what the client does next. invalidCredentials
+		// means "that password was wrong", so a client retries and a person
+		// starts doubting their password. unwillingToPerform means "this
+		// server does not do that at all", which is the true statement and
+		// the one that stops the retry.
+		return ldap.Refuse(ldap.UnwillingToPerform,
+			"an unauthenticated bind proves nothing, and this server does not accept one"), nil
 	}
 	if want, ok := s.readers[strings.ToLower(bindDN)]; ok {
 		// A reader is a service account with no phone, so it carries a code
