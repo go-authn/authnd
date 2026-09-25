@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"os/signal"
@@ -110,14 +111,33 @@ func serve(cmd *cobra.Command, o *options, args []string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	return runUntil(ctx, cmd.OutOrStdout(), srv)
+}
+
+// runUntil serves until the server stops of its own accord or ctx ends.
+//
+// ⛔ It is separate from serve so that it can be TESTED. The shutdown path is
+// the one that runs during every restart -- the one where a server that does
+// not actually stop leaves a port held and the next start failing with
+// "address already in use" -- and it was unreachable by any test, because
+// reaching it meant sending this process a SIGTERM and ending the run it is
+// part of. The signal is not the interesting part; what the loop does when
+// the context ends is.
+func runUntil(ctx context.Context, out io.Writer, srv *server) error {
 	done := make(chan error, 1)
 	go func() { done <- srv.serve() }()
 	select {
 	case err := <-done:
+		// The server stopped on its own: a listener that died, a port taken.
+		// Its error is the answer, and there is nothing to announce.
 		return err
 	case <-ctx.Done():
-		fmt.Fprintln(cmd.OutOrStdout(), "\nstopping")
+		fmt.Fprintln(out, "\nstopping")
 		srv.Close()
+		// ⛔ The result of serve() is still waited for and returned. A
+		// shutdown that returned before the server had finished would report
+		// success while connections were still being answered, which is
+		// exactly the restart that does not take.
 		return <-done
 	}
 }
@@ -283,7 +303,8 @@ func overWhat(cfg *config) string {
 	switch {
 	case cfg.tls() && cfg.StartTLS:
 		// The listener refuses everything until it is upgraded, so this is a
-		// guarantee and not an offer -- see mustUpgrade.
+		// guarantee and not an offer: go-authn/ldap's Server.RequireTLS
+		// refuses every operation until StartTLS has been asked for.
 		return " over TLS, once StartTLS has been asked for"
 	case cfg.tls():
 		return " over TLS"

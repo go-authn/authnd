@@ -350,31 +350,6 @@ func (s *server) Binds() int {
 	return s.binds
 }
 
-// mustUpgrade reports whether this connection has to be protected before
-// anything may be said over it.
-//
-// ⛔ StartTLS is asked for by the CLIENT. A server that merely offers it has
-// promised nothing: a client that does not ask sends its bind password, and
-// receives whatever this server publishes, in the clear -- and everything
-// looks normal at both ends. That is the difference between ldaps://, where
-// the handshake happens before a byte of LDAP, and a plaintext port where it
-// is a request somebody may never make.
-//
-// So a listener configured for StartTLS refuses to work until it has been
-// upgraded. RFC 4513 4.1 has a result code for exactly this, and it is the
-// only thing that makes cert_file a guarantee rather than an offer -- which
-// is what publish_nt_hash is allowed to rely on.
-func (s *server) mustUpgrade(conn net.Conn) bool {
-	if !s.cfg.StartTLS {
-		// ldaps:// handshook before this connection existed, and a site with
-		// no certificate at all made a different decision that is checked
-		// where the configuration is read.
-		return false
-	}
-	_, ok := conn.(*tls.Conn)
-	return !ok
-}
-
 // Bind proves somebody, or does not.
 func (s *server) Bind(_ context.Context, _ ldap.Session, req *ldap.BindRequest) (ldap.Result, error) {
 	s.mu.Lock()
