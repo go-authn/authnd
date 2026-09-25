@@ -771,8 +771,8 @@ func (s *server) Extended(ctx context.Context, sess ldap.Session, req *ldap.Exte
 // eventually forgetting the reload, and answering Success while the running
 // server kept the old password.
 func (s *server) writePassword(target, password string) (ldap.Result, bool) {
-	if err := s.cfg.setPassword(target, password); err != nil {
-		if errors.Is(err, errNotOurs) {
+	if err := hcldir.SetPassword(s.cfg.files, target, password); err != nil {
+		if errors.Is(err, hcldir.ErrNotDeclared) {
 			return ldap.Refuse(ldap.UnwillingToPerform,
 				"%s is served from %s, which this server reads and does not write",
 				target, s.dir.Describe()), false

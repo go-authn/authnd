@@ -32,127 +32,14 @@ func replace(attr string, value string) []ldap.Change {
 	}}
 }
 
-// ⛔ The password has to land where THAT person's block keeps it. Writing an
-// inline password into a block that named a password_file would quietly undo
-// the reason the file exists -- the secret is not in a file somebody prints,
-// pastes or commits -- and the configuration would still parse.
-func TestAPasswordGoesWhereTheBlockKeepsIt(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	pwPath := filepath.Join(dir, "bob.pw")
-	// ⛔ A path goes into HCL SOURCE here, and on Windows it holds
-	// backslashes: C:\Users\RUNNER~1\... makes \U an escape sequence and the
-	// file stops parsing. Forward slashes are a valid HCL string and Windows
-	// opens them perfectly well, so the fixture uses those and the code under
-	// test still sees a real path.
-	hclPath := filepath.ToSlash(pwPath)
-	if err := os.WriteFile(pwPath, []byte("hunter2\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	body := `
-listen  = "127.0.0.1:0"
-base_dn = "dc=example,dc=org"
-
-# a comment that must survive a write
-user "alice" { password = "hunter2" }
-
-user "bob" {
-  password_file = "` + hclPath + `"
-}
-`
-	path := write(t, dir, "c.hcl", body)
-	cfg, err := loadConfig([]string{path})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := cfg.setPassword("alice", "correct horse"); err != nil {
-		t.Fatalf("alice: %v", err)
-	}
-	if err := cfg.setPassword("bob", "stapler battery"); err != nil {
-		t.Fatalf("bob: %v", err)
-	}
-
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := string(after)
-	if !strings.Contains(got, `password = "correct horse"`) {
-		t.Errorf("alice's new password is not in the file:\n%s", got)
-	}
-	if strings.Contains(got, "stapler battery") {
-		t.Errorf("bob's password was written INTO the configuration:\n%s", got)
-	}
-	if !strings.Contains(got, "# a comment that must survive a write") {
-		t.Errorf("the write lost a comment:\n%s", got)
-	}
-	file, err := os.ReadFile(pwPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(string(file)) != "stapler battery" {
-		t.Errorf("the password file holds %q", file)
-	}
-	if fi, err := os.Stat(pwPath); err != nil {
-		t.Fatal(err)
-	} else if fi.Mode().Perm() != 0o600 {
-		t.Errorf("the password file is mode %v, not 0600", fi.Mode().Perm())
-	}
-}
-
-func TestWhatSetPasswordRefuses(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	body := `
-listen  = "127.0.0.1:0"
-base_dn = "dc=example,dc=org"
-
-user "alice" { password = "hunter2" }
-
-# somebody a site holds only the SMB hash for.
-user "hash" { nt_hash = "8846f7eaee8fb117ad06bdd830b7586c" }
-`
-	cfg, err := loadConfig([]string{write(t, dir, "c.hcl", body)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, tc := range []struct {
-		name, who, password, want string
-	}{
-		{"an empty password", "alice", "", "would let anybody in"},
-		{"somebody not written down here", "carol", "x", "not written down"},
-		{"a person held only as an nt_hash", "hash", "x",
-			"would change what can prove them"},
-	} {
-		err := cfg.setPassword(tc.who, tc.password)
-		if err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Errorf("%s: %v", tc.name, err)
-		}
-	}
-}
-
-// ⛔ hclwrite hands back TOKENS, not values. A password_file written as
-// anything but a plain quoted string is refused rather than guessed at,
-// because writing through a path we mis-read writes somebody's password to
-// the wrong file.
-func TestAPasswordFileThatIsNotALiteralIsRefused(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	body := `
-listen  = "127.0.0.1:0"
-base_dn = "dc=example,dc=org"
-user "alice" { password_file = "/does/not/matter${""}" }
-`
-	cfg, err := loadConfig([]string{write(t, dir, "c.hcl", body)})
-	if err != nil {
-		t.Skipf("the configuration refused this before a write could: %v", err)
-	}
-	if err := cfg.setPassword("alice", "x"); err == nil ||
-		!strings.Contains(err.Error(), "not a plain quoted path") {
-		t.Errorf("an interpolated password_file was written through: %v", err)
-	}
-}
+// ⛔ The tests for WRITING a password moved to go-authn/directory/hcldir with
+// the code: how a block is edited, where a password_file's secret goes, and
+// which file out of several is chosen are that package's behaviour now --
+// including the nt_hash case this server can never reach.
+//
+// What stays here is what is this server's: who may ask, which requests it
+// accepts, how an RFC 3062 value is decoded, and what a caller is told when a
+// write that was perfectly legal fails anyway.
 
 func TestOnlyAPasswordChangeIsAccepted(t *testing.T) {
 	t.Parallel()

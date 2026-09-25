@@ -3,7 +3,7 @@ module github.com/go-authn/authnd
 go 1.26.4
 
 require (
-	github.com/go-authn/directory v0.7.0
+	github.com/go-authn/directory v0.8.0
 	github.com/go-authn/ldap v0.3.0
 	github.com/go-authn/oidc v0.1.0
 	github.com/go-sql-driver/mysql v1.10.1
@@ -32,7 +32,7 @@ require (
 	github.com/agext/levenshtein v1.2.1 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/go-asn1-ber/asn1-ber v1.5.8 // indirect
+	github.com/go-asn1-ber/asn1-ber v1.5.8
 	github.com/go-authn/kdc v0.1.0
 	github.com/go-authn/mfa v0.2.0
 	github.com/go-authn/totp v0.1.0
