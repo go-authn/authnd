@@ -84,9 +84,13 @@ func TestTLSDoesNotChangeWhoMaySearch(t *testing.T) {
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
+	// The unauthenticated bind is refused over TLS as it is in the clear,
+	// and with unwillingToPerform (RFC 4513 5.1.2) rather than
+	// invalidCredentials: the transport does not change which refusal is
+	// true.
 	if out, err := run("uid=svc,ou=people,dc=example,dc=org", ""); err == nil {
 		t.Errorf("an empty password was accepted over TLS:\n%s", out)
-	} else if !strings.Contains(out, "Invalid credentials (49)") {
+	} else if !strings.Contains(out, "unwilling to perform (53)") {
 		t.Errorf("the empty password gave:\n%s", out)
 	}
 	if out, err := run("uid=svc,ou=people,dc=example,dc=org", "service"); err == nil {

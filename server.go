@@ -4,6 +4,7 @@ package main
 
 import (
 	"errors"
+	"log/slog"
 
 	"context"
 	"crypto/subtle"
@@ -22,7 +23,7 @@ import (
 	"github.com/go-authn/mfa"
 	"github.com/go-authn/totp"
 
-	ldap "github.com/tannevaled/ldap"
+	ldap "github.com/go-authn/ldap"
 )
 
 // A server answers LDAP from the sources a configuration named.
@@ -217,14 +218,23 @@ func (s *server) Close() error {
 
 // listen starts answering, and says where.
 func (s *server) listen() error {
-	srv := ldap.NewServer()
-	// The library applies the filter, the scope and the attribute selection
-	// (RFC 4511 4.5.1, RFC 4515). Doing it here would be a second
-	// implementation of a search filter evaluator, with its own bugs, in the
-	// one place where a bug means answering a question nobody asked.
-	srv.EnforceLDAP = true
-	srv.BindFunc("", s)
-	srv.SearchFunc("", s)
+	// go-authn/ldap owns the protocol: the framing, the filter, the scope,
+	// the attribute selection and the root DSE. What is left here is the
+	// only part that is ours -- who may bind, who may read, and what this
+	// directory publishes about each person.
+	srv := &ldap.Server{
+		Bind:   s,
+		Search: s,
+		Log:    slog.New(slog.NewTextHandler(s.out, &slog.HandlerOptions{Level: slog.LevelInfo})),
+		// What the root DSE tells a client before it has bound: where to
+		// search, and who this is.
+		NamingContexts: []string{s.cfg.BaseDN},
+		Vendor:         "go-authn/authnd",
+		VendorVersion:  version(),
+	}
+	if s.oidc != nil {
+		srv.SASL = s
+	}
 	s.ldap = srv
 
 	ln, err := net.Listen("tcp", s.cfg.Listen)
@@ -239,6 +249,13 @@ func (s *server) listen() error {
 		}
 		cfg := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
 		srv.TLSConfig = cfg
+		// ⛔ StartTLS is asked for by the CLIENT, so offering it promises
+		// nothing. RequireTLS makes the library refuse every operation until
+		// the connection has been upgraded -- which is what turns cert_file
+		// from an offer into the guarantee publish_nt_hash relies on. The
+		// root DSE is the one exception, and has to be: it is where StartTLS
+		// is advertised.
+		srv.RequireTLS = s.cfg.StartTLS
 		// One or the other. Wrapping the listener AND setting TLSConfig
 		// reads like belt and braces and is not: the wrapped listener
 		// handshakes before a byte of LDAP is spoken, so the StartTLS the
@@ -359,23 +376,43 @@ func (s *server) mustUpgrade(conn net.Conn) bool {
 }
 
 // Bind proves somebody, or does not.
-func (s *server) Bind(bindDN, password string, conn net.Conn) (ldap.LDAPResultCode, error) {
+func (s *server) Bind(_ context.Context, _ ldap.Session, req *ldap.BindRequest) (ldap.Result, error) {
 	s.mu.Lock()
 	s.binds++
 	s.mu.Unlock()
 
-	if s.mustUpgrade(conn) {
-		s.refused(bindDN, fmt.Errorf("this listener serves StartTLS, and nothing asked for it"))
-		return ldap.LDAPResultConfidentialityRequired, nil
-	}
+	bindDN, password := req.Name, string(req.Simple)
 
-	// ⛔ The unauthenticated bind. RFC 4513 5.1.2: a bind with a name and an
-	// EMPTY password is answered success by a real directory, and it means "I
-	// am anonymous" -- not "I proved this name". A server that passes it
-	// through as proof lets anybody in as anybody, and the client that asked
-	// cannot tell the difference from a real success.
+	// ⛔ RFC 4513 has TWO empty-password binds and they are one field apart.
+	//
+	//   5.1.1 ANONYMOUS, an empty name AND an empty password, means "I am
+	//         nobody". It is legitimate, and it is what a client sends
+	//         before it has discovered anything -- including the root DSE
+	//         that tells it how to authenticate at all.
+	//
+	//   5.1.2 UNAUTHENTICATED, a NAME with an empty password, means the same
+	//         thing while NAMING somebody. A server that passes it through
+	//         as proof lets anybody in as anybody, and the client cannot
+	//         tell it from a real success.
+	//
+	// This used to refuse both, which locked out every anonymous client.
+	// Nothing noticed because nothing here was anonymous-readable until the
+	// root DSE existed.
 	if password == "" {
-		return ldap.LDAPResultInvalidCredentials, nil
+		if bindDN == "" {
+			return ldap.Result{Code: ldap.Success}, nil
+		}
+		// ⛔ unwillingToPerform, not invalidCredentials. RFC 4513 5.1.2:
+		// "Servers SHOULD by default fail Unauthenticated Bind requests with
+		// a resultCode of unwillingToPerform."
+		//
+		// The difference is what the client does next. invalidCredentials
+		// means "that password was wrong", so a client retries and a person
+		// starts doubting their password. unwillingToPerform means "this
+		// server does not do that at all", which is the true statement and
+		// the one that stops the retry.
+		return ldap.Refuse(ldap.UnwillingToPerform,
+			"an unauthenticated bind proves nothing, and this server does not accept one"), nil
 	}
 	if want, ok := s.readers[strings.ToLower(bindDN)]; ok {
 		// A reader is a service account with no phone, so it carries a code
@@ -387,17 +424,17 @@ func (s *server) Bind(bindDN, password string, conn net.Conn) (ldap.LDAPResultCo
 		// difference between "wrong at byte 1" and "wrong at byte 12" is
 		// measurable over a network.
 		if subtle.ConstantTimeCompare([]byte(password), []byte(want)) == 1 {
-			return ldap.LDAPResultSuccess, nil
+			return ldap.Result{Code: ldap.Success}, nil
 		}
-		return ldap.LDAPResultInvalidCredentials, nil
+		return ldap.Result{Code: ldap.InvalidCredentials}, nil
 	}
 	name, ok := s.nameOf(bindDN)
 	if !ok {
-		return ldap.LDAPResultInvalidCredentials, nil
+		return ldap.Result{Code: ldap.InvalidCredentials}, nil
 	}
 	id, ok := s.who[name]
 	if !ok {
-		return ldap.LDAPResultInvalidCredentials, nil
+		return ldap.Result{Code: ldap.InvalidCredentials}, nil
 	}
 	if s.wantsCode() {
 		factors, err := s.factorsFor(id, password)
@@ -406,7 +443,7 @@ func (s *server) Bind(bindDN, password string, conn net.Conn) (ldap.LDAPResultCo
 			// has not proved who they are is told that the bind failed and
 			// nothing else.
 			s.refused(name, err)
-			return ldap.LDAPResultInvalidCredentials, nil
+			return ldap.Result{Code: ldap.InvalidCredentials}, nil
 		}
 		return s.decide(name, factors)
 	}
@@ -414,18 +451,18 @@ func (s *server) Bind(bindDN, password string, conn net.Conn) (ldap.LDAPResultCo
 	// or a bind against the directory that holds the password and will not
 	// give it up.
 	if err := verifyPassword(id, password); err != nil {
-		return ldap.LDAPResultInvalidCredentials, nil
+		return ldap.Result{Code: ldap.InvalidCredentials}, nil
 	}
-	return ldap.LDAPResultSuccess, nil
+	return ldap.Result{Code: ldap.Success}, nil
 }
 
 // bindWithCode is the reader's version: the same policy, over a password this
 // server holds rather than an identity a directory answers for.
-func (s *server) bindWithCode(who, given string, make func(string) ([]mfa.Factor, error)) (ldap.LDAPResultCode, error) {
+func (s *server) bindWithCode(who, given string, make func(string) ([]mfa.Factor, error)) (ldap.Result, error) {
 	factors, err := make(given)
 	if err != nil {
 		s.refused(who, err)
-		return ldap.LDAPResultInvalidCredentials, nil
+		return ldap.Result{Code: ldap.InvalidCredentials}, nil
 	}
 	return s.decide(who, factors)
 }
@@ -435,7 +472,7 @@ func (s *server) bindWithCode(who, given string, make func(string) ([]mfa.Factor
 // The client is told one thing -- invalid credentials -- whichever factor
 // refused. WHICH one is a fact about the account, and telling somebody who has
 // not proved anything narrows their next guess.
-func (s *server) decide(who string, factors []mfa.Factor) (ldap.LDAPResultCode, error) {
+func (s *server) decide(who string, factors []mfa.Factor) (ldap.Result, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	r, err := mfa.Verify(ctx, s.policy, factors...)
@@ -451,9 +488,9 @@ func (s *server) decide(who string, factors []mfa.Factor) (ldap.LDAPResultCode, 
 				fmt.Fprintf(s.out, "  %s: %v\n", a.Name, a.Err)
 			}
 		}
-		return ldap.LDAPResultInvalidCredentials, nil
+		return ldap.Result{Code: ldap.InvalidCredentials}, nil
 	}
-	return ldap.LDAPResultSuccess, nil
+	return ldap.Result{Code: ldap.Success}, nil
 }
 
 // refused writes why a bind failed where an administrator can read it, and
@@ -486,40 +523,43 @@ func (s *server) readerFactors(dn, want string) func(string) ([]mfa.Factor, erro
 }
 
 // Search answers a reader, and nobody else.
-func (s *server) Search(boundDN string, req ldap.SearchRequest, conn net.Conn) (ldap.ServerSearchResult, error) {
-	if s.mustUpgrade(conn) {
-		return ldap.ServerSearchResult{ResultCode: ldap.LDAPResultConfidentialityRequired},
-			fmt.Errorf("this listener serves StartTLS, and nothing asked for it")
-	}
-	if _, ok := s.readers[strings.ToLower(boundDN)]; !ok {
+func (s *server) Search(ctx context.Context, sess ldap.Session, req *ldap.SearchRequest, w ldap.EntryWriter) (ldap.Result, error) {
+	if _, ok := s.readers[strings.ToLower(sess.BoundDN())]; !ok {
 		// A directory that answers everybody has published its people to
 		// everybody. Binding proves who you are; reading the list is a
 		// separate thing to be allowed.
-		return ldap.ServerSearchResult{ResultCode: ldap.LDAPResultInsufficientAccessRights},
-			fmt.Errorf("only a reader may search")
+		return ldap.Refuse(ldap.InsufficientAccessRights, "only a reader may search"), nil
 	}
-	base := strings.ToLower(req.BaseDN)
-	var entries []*ldap.Entry
-	// Both trees are offered unless the base names one of them: the library
-	// applies the scope afterwards, and a base of dc=example,dc=org is a
-	// legitimate way to ask for everything.
-	if base == "" || strings.HasSuffix(strings.ToLower(s.peopleDN), base) || strings.HasSuffix(base, strings.ToLower(s.peopleDN)) {
-		entries = append(entries, s.peopleEntries()...)
+	// ⛔ The scope test is the library's. This used to be a pair of
+	// HasSuffix calls in both directions, which is the shape that puts
+	// ou=morepeople into a search for ou=people -- and the library's version
+	// is the one with the table of cases behind it.
+	//
+	// The filter and the attribute selection are the library's too: this
+	// server publishes entries and does not decide which of them a question
+	// was about.
+	for _, e := range append(s.peopleEntries(), s.groupEntries()...) {
+		if err := ctx.Err(); err != nil {
+			return ldap.Result{}, err
+		}
+		if !ldap.InScope(e.DN, req.BaseObject, req.Scope) || !req.Filter.Matches(e) {
+			continue
+		}
+		if err := w.Entry(e); err != nil {
+			return ldap.Result{}, err
+		}
 	}
-	if base == "" || strings.HasSuffix(strings.ToLower(s.groupsDN), base) || strings.HasSuffix(base, strings.ToLower(s.groupsDN)) {
-		entries = append(entries, s.groupEntries()...)
-	}
-	return ldap.ServerSearchResult{Entries: entries, ResultCode: ldap.LDAPResultSuccess}, nil
+	return ldap.Result{Code: ldap.Success}, nil
 }
 
 // peopleEntries is everybody, as posixAccount entries.
 func (s *server) peopleEntries() []*ldap.Entry {
 	var out []*ldap.Entry
 	for _, id := range s.sorted() {
-		attrs := []*ldap.EntryAttribute{
-			{Name: "objectClass", Values: []string{"top", "person", "posixAccount"}},
-			{Name: "uid", Values: []string{id.Name()}},
-			{Name: "cn", Values: []string{id.Name()}},
+		attrs := []*ldap.Attribute{
+			ldap.StringAttribute("objectClass", "top", "person", "posixAccount"),
+			ldap.StringAttribute("uid", id.Name()),
+			ldap.StringAttribute("cn", id.Name()),
 		}
 		// ⛔ Published only when asked for, because it IS the credential:
 		// whoever holds MD4(UTF16LE(password)) authenticates as that person
@@ -527,13 +567,12 @@ func (s *server) peopleEntries() []*ldap.Entry {
 		// refuses to turn this on where it would cross a network in the clear.
 		if s.cfg.PublishNTHash {
 			if key, err := id.NTKey(); err == nil {
-				attrs = append(attrs, &ldap.EntryAttribute{
-					Name: "sambaNTPassword", Values: []string{strings.ToUpper(hex.EncodeToString(key))},
-				})
+				attrs = append(attrs, ldap.StringAttribute("sambaNTPassword",
+					strings.ToUpper(hex.EncodeToString(key))))
 			}
 		}
 		if keys := id.Keys(); len(keys) > 0 {
-			attrs = append(attrs, &ldap.EntryAttribute{Name: "sshPublicKey", Values: keys})
+			attrs = append(attrs, ldap.StringAttribute("sshPublicKey", keys...))
 		}
 		out = append(out, &ldap.Entry{DN: s.dnOf(id.Name()), Attributes: attrs})
 	}
@@ -550,10 +589,10 @@ func (s *server) groupEntries() []*ldap.Entry {
 		}
 		out = append(out, &ldap.Entry{
 			DN: "cn=" + name + "," + s.groupsDN,
-			Attributes: []*ldap.EntryAttribute{
-				{Name: "objectClass", Values: []string{"top", "posixGroup"}},
-				{Name: "cn", Values: []string{name}},
-				{Name: "memberUid", Values: members},
+			Attributes: []*ldap.Attribute{
+				ldap.StringAttribute("objectClass", "top", "posixGroup"),
+				ldap.StringAttribute("cn", name),
+				ldap.StringAttribute("memberUid", members...),
 			},
 		})
 	}

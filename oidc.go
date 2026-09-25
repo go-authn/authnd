@@ -5,16 +5,14 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"net"
 	"strings"
 	"time"
 
+	"github.com/go-authn/ldap"
 	"github.com/go-authn/mfa"
 	"github.com/go-authn/oidc"
-	"github.com/tannevaled/ldap"
 )
 
 // OIDC at the bind, in the field a token belongs in.
@@ -114,13 +112,24 @@ func openOIDC(b *oidcBlock) (*oidcAuth, error) {
 // block answers authMethodNotSupported to every mechanism, which tells a
 // client "not this way" rather than "wrong password" -- and those send it to
 // different places: one is a reason to try again, the other is not.
-func (s *server) BindSASL(_, mechanism string, credentials []byte, conn net.Conn) (ldap.SASLBindResult, error) {
+// Mechanisms is what the root DSE advertises. A mechanism missing here is
+// one nothing will ever try, because a client discovers what it may use by
+// reading that attribute.
+func (s *server) Mechanisms() []string {
+	if s.oidc == nil {
+		return nil
+	}
+	return []string{oauthBearer}
+}
+
+func (s *server) BindSASL(ctx context.Context, sess ldap.Session, req *ldap.BindRequest) (ldap.SASLResult, error) {
 	s.mu.Lock()
 	s.binds++
 	s.mu.Unlock()
 
+	mechanism, credentials := req.SASL.Mechanism, req.SASL.Credentials
 	if s.oidc == nil || mechanism != oauthBearer {
-		return ldap.SASLBindResult{Code: ldap.LDAPResultAuthMethodNotSupported}, nil
+		return ldap.SASLResult{Result: ldap.Result{Code: ldap.AuthMethodNotSupported}}, nil
 	}
 	// RFC 7628 3.2.3: after a failure the server sends a JSON error and the
 	// client answers with a single ^A, which exists only to let the exchange
@@ -128,11 +137,11 @@ func (s *server) BindSASL(_, mechanism string, credentials []byte, conn net.Conn
 	// that started at the end; both are refused, and neither needs this
 	// server to remember anything about the connection.
 	if string(credentials) == kvsep {
-		return ldap.SASLBindResult{Code: ldap.LDAPResultInvalidCredentials}, nil
+		return ldap.SASLResult{Result: ldap.Result{Code: ldap.InvalidCredentials}}, nil
 	}
-	if _, ok := conn.(*tls.Conn); !ok && !s.oidc.cfg.AllowPlaintext {
+	if _, encrypted := sess.TLS(); !encrypted && !s.oidc.cfg.AllowPlaintext {
 		s.refused("a token", fmt.Errorf("%s was offered over a connection that is not encrypted, and allow_plaintext is not set", oauthBearer))
-		return ldap.SASLBindResult{Code: ldap.LDAPResultConfidentialityRequired}, nil
+		return ldap.SASLResult{Result: ldap.Result{Code: ldap.ConfidentialityRequired}}, nil
 	}
 
 	authzid, token, err := parseOAuthBearer(credentials)
@@ -141,9 +150,9 @@ func (s *server) BindSASL(_, mechanism string, credentials []byte, conn net.Conn
 		return s.oidcChallenge("invalid_request"), nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	vctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	tok, err := s.oidc.verifier.Verify(ctx, token)
+	tok, err := s.oidc.verifier.Verify(vctx, token)
 	if err != nil {
 		s.refused("a token", err)
 		return s.oidcChallenge("invalid_token"), nil
@@ -172,13 +181,13 @@ func (s *server) BindSASL(_, mechanism string, credentials []byte, conn net.Conn
 	}
 
 	if s.wantsCode() {
-		code, err := s.decide(name, tokenFactors(tok))
-		if err != nil || code != ldap.LDAPResultSuccess {
-			return ldap.SASLBindResult{Code: code}, err
+		res, err := s.decide(name, tokenFactors(tok))
+		if err != nil || res.Code != ldap.Success {
+			return ldap.SASLResult{Result: res}, err
 		}
 	}
-	return ldap.SASLBindResult{
-		Code: ldap.LDAPResultSuccess,
+	return ldap.SASLResult{
+		Result: ldap.Result{Code: ldap.Success},
 		// RFC 4513 5.2.1: the name field of a SASL bind is ignored, so the
 		// DN the connection is now bound as comes from here and nowhere
 		// else. It is spelled the way every other entry this server
@@ -200,15 +209,18 @@ func (s *server) BindSASL(_, mechanism string, credentials []byte, conn net.Conn
 // key id -- is in this server's own output. A client that sent a token it
 // should not have is not owed the difference between "this is not for us"
 // and "this is not signed by anyone we know".
-func (s *server) oidcChallenge(status string) ldap.SASLBindResult {
+func (s *server) oidcChallenge(status string) ldap.SASLResult {
 	body, err := json.Marshal(struct {
 		Status        string `json:"status"`
 		Configuration string `json:"openid-configuration,omitempty"`
 	}{Status: status, Configuration: s.oidc.discovery})
 	if err != nil {
-		return ldap.SASLBindResult{Code: ldap.LDAPResultInvalidCredentials}
+		return ldap.SASLResult{Result: ldap.Result{Code: ldap.InvalidCredentials}}
 	}
-	return ldap.SASLBindResult{Code: ldap.LDAPResultSaslBindInProgress, ServerCreds: body}
+	return ldap.SASLResult{
+		Result:      ldap.Result{Code: ldap.SaslBindInProgress},
+		ServerCreds: body,
+	}
 }
 
 // parseOAuthBearer reads the client's initial response (RFC 7628 3.1).

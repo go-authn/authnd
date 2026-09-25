@@ -8,20 +8,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tannevaled/ldap"
+	"github.com/go-authn/ldap"
 )
 
 // bindWithToken does one OAUTHBEARER bind against a running server and
 // returns what it answered.
-func bindWithToken(t *testing.T, r *running, authzid, token string) (ldap.LDAPResultCode, []byte) {
+func bindWithToken(t *testing.T, r *running, authzid, token string) (ldap.ResultCode, []byte) {
 	t.Helper()
-	c, err := ldap.DialTimeout("tcp", r.addr, 5*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
+	c := client(t, r)
 	t.Cleanup(func() { c.Close() })
-	code, creds, _ := c.SASLBind("", oauthBearer, oauthBearerCredentials(authzid, token))
-	return code, creds
+	step, _ := c.BindSASL(oauthBearer, oauthBearerCredentials(authzid, token))
+	return step.Code, step.ServerCreds
 }
 
 func oidcServer(t *testing.T, p *provider, extraBlock, extraConfig string) *running {
@@ -44,14 +41,11 @@ func TestATokenBindsAsThePersonItNames(t *testing.T) {
 	r := oidcServer(t, p, "", "")
 
 	tok := p.token(t, map[string]any{"preferred_username": "alice"})
-	c, err := ldap.DialTimeout("tcp", r.addr, 5*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
+	c := client(t, r)
 	defer c.Close()
-	code, _, err := c.SASLBind("", oauthBearer, oauthBearerCredentials("", tok))
-	if err != nil || code != ldap.LDAPResultSuccess {
-		t.Fatalf("the bind answered %d (%v); the server said: %s", code, err, r.out.String())
+	step, err := c.BindSASL(oauthBearer, oauthBearerCredentials("", tok))
+	if err != nil || step.Code != ldap.Success {
+		t.Fatalf("the bind answered %s (%v); the server said: %s", step.Code, err, r.out.String())
 	}
 }
 
@@ -84,20 +78,17 @@ user "alice" { password = "hunter2" }
 
 	// tess binds the way she always did: her password with this second's
 	// code on the end of it.
-	c, err := ldap.DialTimeout("tcp", r.addr, 5*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
+	c := client(t, r)
 	defer c.Close()
-	if err := c.Bind("uid=tess,ou=people,dc=example,dc=org", "hunter2"+codeNow(t, tess)); err != nil {
-		t.Errorf("a password-and-code bind stopped working once OIDC was configured: %v\n%s", err, r.out.String())
+	if res, err := c.Bind("uid=tess,ou=people,dc=example,dc=org", "hunter2"+codeNow(t, tess)); err != nil || res.Code != ldap.Success {
+		t.Errorf("a password-and-code bind stopped working once OIDC was configured: %s (%v)\n%s", res.Code, err, r.out.String())
 	}
 
 	// alice sends a token, on the same server, under the same policy. Her
 	// provider says it checked two distinct kinds, and that is the evidence.
 	tok := p.token(t, map[string]any{"preferred_username": "alice", "amr": []string{"pwd", "otp"}})
-	if code, creds := bindWithToken(t, r, "", tok); code != ldap.LDAPResultSuccess {
-		t.Errorf("the token bind answered %d (%s)\n%s", code, creds, r.out.String())
+	if code, creds := bindWithToken(t, r, "", tok); code != ldap.Success {
+		t.Errorf("the token bind answered %s (%s)\n%s", code, creds, r.out.String())
 	}
 }
 
@@ -107,7 +98,7 @@ func TestATokenForSomebodyThisDirectoryDoesNotHaveIsRefused(t *testing.T) {
 
 	tok := p.token(t, map[string]any{"preferred_username": "mallory"})
 	code, creds := bindWithToken(t, r, "", tok)
-	if code == ldap.LDAPResultSuccess {
+	if code == ldap.Success {
 		t.Fatal("a token for somebody nobody publishes bound")
 	}
 	// The client is told the token is not good, and nothing about who exists.
@@ -136,7 +127,7 @@ func TestATokenSignedByTheWrongKeyIsRefused(t *testing.T) {
 			"iat":                time.Now().Unix(),
 			"exp":                time.Now().Add(time.Hour).Unix(),
 		})
-	if code, _ := bindWithToken(t, r, "", tok); code == ldap.LDAPResultSuccess {
+	if code, _ := bindWithToken(t, r, "", tok); code == ldap.Success {
 		t.Fatal("a token signed by a key this provider does not publish bound")
 	}
 }
@@ -150,7 +141,7 @@ func TestAnExpiredTokenIsRefused(t *testing.T) {
 		"exp":                time.Now().Add(-time.Hour).Unix(),
 		"iat":                time.Now().Add(-2 * time.Hour).Unix(),
 	})
-	if code, _ := bindWithToken(t, r, "", tok); code == ldap.LDAPResultSuccess {
+	if code, _ := bindWithToken(t, r, "", tok); code == ldap.Success {
 		t.Fatal("an expired token bound")
 	}
 }
@@ -160,7 +151,7 @@ func TestATokenForAnotherAudienceIsRefused(t *testing.T) {
 	r := oidcServer(t, p, "", "")
 
 	tok := p.token(t, map[string]any{"preferred_username": "alice", "aud": "somebody-else"})
-	if code, _ := bindWithToken(t, r, "", tok); code == ldap.LDAPResultSuccess {
+	if code, _ := bindWithToken(t, r, "", tok); code == ldap.Success {
 		t.Fatal("a token addressed to another service bound")
 	}
 }
@@ -174,7 +165,7 @@ func TestATokenMayNotAskToBeSomebodyElse(t *testing.T) {
 
 	tok := p.token(t, map[string]any{"preferred_username": "alice"})
 	code, _ := bindWithToken(t, r, "bob", tok)
-	if code == ldap.LDAPResultSuccess {
+	if code == ldap.Success {
 		t.Fatal("a token for alice bound while asking to be bob")
 	}
 	if !strings.Contains(r.out.String(), "does not delegate") {
@@ -189,7 +180,7 @@ func TestAnAuthzidThatNamesTheSamePersonIsFine(t *testing.T) {
 	r := oidcServer(t, p, "", "")
 
 	tok := p.token(t, map[string]any{"preferred_username": "alice"})
-	if code, creds := bindWithToken(t, r, "alice", tok); code != ldap.LDAPResultSuccess {
+	if code, creds := bindWithToken(t, r, "alice", tok); code != ldap.Success {
 		t.Fatalf("answered %d (%s); the server said: %s", code, creds, r.out.String())
 	}
 }
@@ -224,7 +215,7 @@ mfa {
 				claims["amr"] = tc.amr
 			}
 			code, _ := bindWithToken(t, r, "", p.token(t, claims))
-			if got := code == ldap.LDAPResultSuccess; got != tc.want {
+			if got := code == ldap.Success; got != tc.want {
 				t.Errorf("%s: bound=%v, want %v (answered %d)\n%s", tc.what, got, tc.want, code, r.out.String())
 			}
 		})
@@ -238,14 +229,11 @@ func TestAnUnknownMechanismSaysSoRatherThanRefusingCredentials(t *testing.T) {
 	p := newProvider(t)
 	r := oidcServer(t, p, "", "")
 
-	c, err := ldap.DialTimeout("tcp", r.addr, 5*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
+	c := client(t, r)
 	defer c.Close()
-	code, _, _ := c.SASLBind("", "GSSAPI", []byte("whatever"))
-	if code != ldap.LDAPResultAuthMethodNotSupported {
-		t.Errorf("answered %d, want authMethodNotSupported (%d)", code, ldap.LDAPResultAuthMethodNotSupported)
+	step, _ := c.BindSASL("GSSAPI", []byte("whatever"))
+	if step.Code != ldap.AuthMethodNotSupported {
+		t.Errorf("answered %s, want authMethodNotSupported", step.Code)
 	}
 }
 
@@ -257,14 +245,11 @@ listen  = "127.0.0.1:0"
 base_dn = "dc=example,dc=org"
 user "alice" { password = "hunter2" }
 `)
-	c, err := ldap.DialTimeout("tcp", r.addr, 5*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
+	c := client(t, r)
 	defer c.Close()
-	code, _, _ := c.SASLBind("", oauthBearer, oauthBearerCredentials("", "anything"))
-	if code != ldap.LDAPResultAuthMethodNotSupported {
-		t.Errorf("answered %d, want authMethodNotSupported", code)
+	step, _ := c.BindSASL(oauthBearer, oauthBearerCredentials("", "anything"))
+	if step.Code != ldap.AuthMethodNotSupported {
+		t.Errorf("answered %s, want authMethodNotSupported", step.Code)
 	}
 }
 
@@ -275,27 +260,24 @@ func TestTheFailureExchangeEndsTheWayTheStandardSaysItDoes(t *testing.T) {
 	p := newProvider(t)
 	r := oidcServer(t, p, "", "")
 
-	c, err := ldap.DialTimeout("tcp", r.addr, 5*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
+	c := client(t, r)
 	defer c.Close()
 
-	code, creds, _ := c.SASLBind("", oauthBearer, oauthBearerCredentials("", "not a token"))
-	if code != ldap.LDAPResultSaslBindInProgress {
-		t.Fatalf("a refusal answered %d, want saslBindInProgress so the client can finish", code)
+	step, _ := c.BindSASL(oauthBearer, oauthBearerCredentials("", "not a token"))
+	if step.Code != ldap.SaslBindInProgress {
+		t.Fatalf("a refusal answered %s, want saslBindInProgress so the client can finish", step.Code)
 	}
-	if !strings.Contains(string(creds), `"status":"invalid_token"`) {
-		t.Errorf("the challenge is %q", creds)
+	if !strings.Contains(string(step.ServerCreds), `"status":"invalid_token"`) {
+		t.Errorf("the challenge is %q", step.ServerCreds)
 	}
-	if !strings.Contains(string(creds), "openid-configuration") {
-		t.Errorf("the challenge does not say where to ask: %q", creds)
+	if !strings.Contains(string(step.ServerCreds), "openid-configuration") {
+		t.Errorf("the challenge does not say where to ask: %q", step.ServerCreds)
 	}
 
 	// The dummy response that ends it.
-	code, _, _ = c.SASLBind("", oauthBearer, []byte(kvsep))
-	if code != ldap.LDAPResultInvalidCredentials {
-		t.Errorf("the exchange ended with %d, want invalidCredentials", code)
+	step, _ = c.BindSASL(oauthBearer, []byte(kvsep))
+	if step.Code != ldap.InvalidCredentials {
+		t.Errorf("the exchange ended with %s, want invalidCredentials", step.Code)
 	}
 }
 
@@ -317,8 +299,8 @@ oidc {
 
 	tok := p.token(t, map[string]any{"preferred_username": "alice"})
 	code, _ := bindWithToken(t, r, "", tok)
-	if code != ldap.LDAPResultConfidentialityRequired {
-		t.Errorf("answered %d, want confidentialityRequired (%d)", code, ldap.LDAPResultConfidentialityRequired)
+	if code != ldap.ConfidentialityRequired {
+		t.Errorf("answered %d, want confidentialityRequired (%d)", code, ldap.ConfidentialityRequired)
 	}
 	if !strings.Contains(r.out.String(), "not encrypted") {
 		t.Errorf("the server did not say why:\n%s", r.out.String())

@@ -57,15 +57,34 @@ somebody with the same name in the database. Group membership is the union.
 
 An LDAP server is asked to prove people, so the refusals are the design.
 
-### The unauthenticated bind
+### The two empty-password binds
 
-A bind with a name and an **empty password** is answered `success` by a real
-directory (RFC 4513 §5.1.2). It means *I am anonymous* — not *I proved this
-name*. A server that passes it through as proof lets anybody in as anybody, and
-the client that asked cannot tell it from a real success.
+RFC 4513 has two, and they are **one field apart**:
 
-Refused here, always. It is the first thing the tests check, with OpenLDAP's
-own client sending exactly that.
+| | | |
+|---|---|---|
+| **§5.1.1 anonymous** | empty name, empty password | *legitimate* — answered `success`, and the association is anonymous |
+| **§5.1.2 unauthenticated** | a **name**, empty password | refused with `unwillingToPerform` |
+
+The unauthenticated one establishes an anonymous state *while naming
+somebody*. The name "is not to be authenticated or otherwise validated", and
+the specification says servers "SHOULD by default fail Unauthenticated Bind
+requests with a resultCode of `unwillingToPerform`".
+
+Getting this wrong goes wrong in **both** directions, and this server has
+managed both:
+
+- Passing it through as proof lets anybody in as anybody, and the client
+  cannot tell it from a real success.
+- Refusing *every* empty password — which this did until the root DSE
+  arrived — locks out every anonymous client, including from the discovery
+  that tells it how to authenticate at all.
+- Refusing it as `invalidCredentials` says *that password was wrong*, so a
+  person retries and starts doubting a password that was never the problem.
+  `unwillingToPerform` says *this server does not do that*, which is true and
+  stops the retry.
+
+Both are checked, with OpenLDAP's own client sending exactly them.
 
 ### Anonymous search
 
@@ -280,7 +299,8 @@ decides it. Nothing about this is a limitation of this program.
 
 - **OpenLDAP's own `ldapsearch`** reads this server: the entries, a filter that
   really filters, the groups, a bind as a person, `Invalid credentials (49)`
-  for a wrong password and for the empty one. A Go client from the same
+  for a wrong password and `Server is unwilling to perform (53)` for the
+  unauthenticated bind. A Go client from the same
   ecosystem could share a misreading of the protocol with the server and agree
   with it; OpenLDAP cannot.
 - **TLS, judged twice**: `ldapsearch` over `ldaps://` proves the LDAP

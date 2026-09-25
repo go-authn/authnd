@@ -81,13 +81,26 @@ func TestOpenLDAPBindsAsSomebodyFromTheDatabase(t *testing.T) {
 	}
 }
 
-// ⛔ The unauthenticated bind, refused.
+// ⛔ The unauthenticated bind, refused -- and refused with the code RFC 4513
+// asks for.
 //
-// RFC 4513 §5.1.2: a bind with a name and an EMPTY password is answered
-// SUCCESS by a real directory and means "I am anonymous". A server that passes
-// that through as proof lets anybody in as anybody, and the client cannot tell
-// it from a real success. The judge here is ldapsearch, which sends exactly
-// that when it is given -w "".
+// §5.1.2 is a bind carrying a NAME and a zero-length password. It does not
+// prove the name; it establishes an anonymous authorization state while
+// naming somebody, and the specification says servers "SHOULD by default
+// fail Unauthenticated Bind requests with a resultCode of
+// unwillingToPerform".
+//
+// This comment used to say such a bind "is answered SUCCESS by a real
+// directory". That is wrong, it was wrong in three places at once, and the
+// mistake matters twice over: a server that passes it through as proof lets
+// anybody in as anybody, and one that refuses it as invalidCredentials tells
+// the client its password was wrong -- so a person retries and starts
+// doubting a password that was never the problem.
+//
+// §5.1.1 is the ANONYMOUS bind, an empty name AND an empty password, which
+// is legitimate and succeeds. One field apart.
+//
+// The judge is ldapsearch, which sends exactly this when given -w "".
 func TestTheUnauthenticatedBindIsRefused(t *testing.T) {
 	bin := needLDAPSearch(t)
 	dir := t.TempDir()
@@ -99,7 +112,7 @@ func TestTheUnauthenticatedBindIsRefused(t *testing.T) {
 		if err == nil {
 			t.Errorf("%s was let in with an empty password:\n%s", who, out)
 		}
-		if !strings.Contains(out, "Invalid credentials (49)") {
+		if !strings.Contains(out, "unwilling to perform (53)") {
 			t.Errorf("%s with an empty password gave:\n%s", who, out)
 		}
 	}
