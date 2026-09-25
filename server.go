@@ -226,7 +226,13 @@ func (s *server) listen() error {
 	srv := &ldap.Server{
 		Bind:   s,
 		Search: s,
-		Log:    slog.New(slog.NewTextHandler(s.out, &slog.HandlerOptions{Level: slog.LevelInfo})),
+		// ⛔ Modify and the RFC 3062 extended operation only. add, delete
+		// and modifyDN exist in the library and are deliberately not wired:
+		// this server edits a password in a file it owns, and nothing else
+		// in a site's configuration.
+		Modify:   s,
+		Extended: s,
+		Log:      slog.New(slog.NewTextHandler(s.out, &slog.HandlerOptions{Level: slog.LevelInfo})),
 		// What the root DSE tells a client before it has bound: where to
 		// search, and who this is.
 		NamingContexts: []string{s.cfg.BaseDN},
@@ -594,4 +600,191 @@ func (s *server) nameOf(dn string) (string, bool) {
 	// looked up in a map that a source filled: "Alice" and "alice" are two
 	// keys, and guessing which is a way to let somebody in as the other.
 	return strings.SplitN(first, "=", 2)[1], name != ""
+}
+
+// Modify answers RFC 4511 4.6, for exactly one thing: a person changing their
+// own password.
+//
+// ⛔ THE POLICY IS THE NARROWEST ONE THAT IS STILL USEFUL, and it is a policy
+// rather than a limitation of the protocol half: go-authn/ldap carries add,
+// delete and modifyDN too, and none of them is wired here. Widening this is a
+// decision about who may edit a site's configuration file, which is not a
+// decision a bind should be able to make.
+func (s *server) Modify(ctx context.Context, sess ldap.Session, req *ldap.ModifyRequest) (ldap.WriteResult, error) {
+	who := sess.BoundDN()
+	if who == "" {
+		// RFC 4511 4.6 on an anonymous connection. Saying "insufficient
+		// access" would be the wrong half of the truth: nothing was proved.
+		return ldap.WriteResult{Result: ldap.Refuse(ldap.InsufficientAccessRights,
+			"an anonymous connection has not said who it is")}, nil
+	}
+	target, ok := s.nameOf(req.DN)
+	if !ok {
+		return ldap.WriteResult{Result: ldap.Refuse(ldap.NoSuchObject,
+			"%s is not a person this server publishes", req.DN)}, nil
+	}
+	// ⛔ Compared as DNs, not as strings. "uid=alice, ou=people,dc=example"
+	// and "uid=alice,ou=people,dc=example" are the same DN and differ as
+	// strings, and the string comparison is the one that lets nobody through
+	// while looking like it works.
+	if !ldap.EqualDN(who, s.dnOf(target)) {
+		return ldap.WriteResult{Result: ldap.Refuse(ldap.InsufficientAccessRights,
+			"a password may be changed only by the person it belongs to")}, nil
+	}
+
+	password, err := onlyAPasswordChange(req.Changes)
+	if err != nil {
+		return ldap.WriteResult{Result: ldap.Refuse(ldap.UnwillingToPerform, "%s", err)}, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if res, ok := s.writePassword(target, password); !ok {
+		return ldap.WriteResult{Result: res}, nil
+	}
+	return ldap.WriteResult{Result: ldap.Result{Code: ldap.Success}}, nil
+}
+
+// onlyAPasswordChange is the new password in a modify that asks for that and
+// nothing else.
+//
+// ⛔ RFC 4511 4.6 makes a modify ATOMIC: "the entire list of modifications is
+// performed, or none of it". A request that replaces userPassword AND adds a
+// group cannot be half-honoured, so one this cannot do entirely it refuses
+// entirely -- rather than doing the password and dropping the rest, which
+// would report success for something nobody asked for.
+func onlyAPasswordChange(changes []ldap.Change) (string, error) {
+	if len(changes) != 1 {
+		return "", fmt.Errorf("this server changes a password and nothing else, "+
+			"and %d changes were asked for in one modify", len(changes))
+	}
+	c := changes[0]
+	if !strings.EqualFold(c.Attribute.Name, "userPassword") {
+		return "", fmt.Errorf("this server changes userPassword and nothing else, not %s",
+			c.Attribute.Name)
+	}
+	if c.Operation != ldap.ReplaceValues {
+		return "", fmt.Errorf("a password is replaced, not %s", c.Operation)
+	}
+	if len(c.Attribute.Values) != 1 {
+		return "", fmt.Errorf("a password is one value, and %d were given",
+			len(c.Attribute.Values))
+	}
+	return string(c.Attribute.Values[0]), nil
+}
+
+// reloadLocal re-reads the configuration files and refreshes the people this
+// server holds ITSELF.
+//
+// ⛔ The comment on `who` says sources are read once at startup and a change
+// is picked up by a restart. That is right for a source somebody else owns --
+// polling a directory is a decision with a cost. It is WRONG for a change this
+// process just made: answering Success to a password change and then going on
+// accepting the old password until a restart is reporting something that did
+// not happen.
+//
+// So only the local people are rebuilt, from the files on disk rather than
+// from what was written, which is the difference between believing the write
+// and checking it. Sources reached over a network are not touched and not
+// reopened.
+func (s *server) reloadLocal() error {
+	cfg, err := loadConfig(s.cfg.files)
+	if err != nil {
+		return err
+	}
+	s.cfg = cfg
+	local, err := s.localSource()
+	if err != nil {
+		return err
+	}
+	ids, err := local.Identities()
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		s.who[id.Name()] = id
+	}
+	return nil
+}
+
+// ExtendedNames is the extended operations this server answers, which the
+// library publishes as supportedExtension in the root DSE.
+func (s *server) ExtendedNames() []string { return []string{ldap.OIDPasswordModify} }
+
+// Extended answers RFC 3062, the password modify operation.
+//
+// ⛔ This exists because the Modify above, correct as it is, is not what the
+// tool reaches for: `ldappasswd` sends this extended operation and answers
+// "this server answers no extended operation 1.3.6.1.4.1.4203.1.11.1" without
+// it. A write path nobody's client speaks is a write path nobody has.
+func (s *server) Extended(ctx context.Context, sess ldap.Session, req *ldap.ExtendedRequest) (ldap.ExtendedResult, error) {
+	if req.Name != ldap.OIDPasswordModify {
+		return ldap.ExtendedResult{Result: ldap.Refuse(ldap.ProtocolError,
+			"this server answers no extended operation %s", req.Name)}, nil
+	}
+	pm, err := decodePasswdModify(req.Value)
+	if err != nil {
+		return ldap.ExtendedResult{Result: ldap.Refuse(ldap.ProtocolError, "%s", err)}, nil
+	}
+
+	who := sess.BoundDN()
+	if who == "" {
+		return ldap.ExtendedResult{Result: ldap.Refuse(ldap.InsufficientAccessRights,
+			"an anonymous connection has not said who it is")}, nil
+	}
+	// RFC 3062: an absent userIdentity means "the connection's own identity".
+	dn := who
+	if pm.haveIdentity {
+		dn = pm.identity
+	}
+	target, ok := s.nameOf(dn)
+	if !ok {
+		return ldap.ExtendedResult{Result: ldap.Refuse(ldap.NoSuchObject,
+			"%s is not a person this server publishes", dn)}, nil
+	}
+	if !ldap.EqualDN(who, s.dnOf(target)) {
+		return ldap.ExtendedResult{Result: ldap.Refuse(ldap.InsufficientAccessRights,
+			"a password may be changed only by the person it belongs to")}, nil
+	}
+	if pm.new == "" {
+		// ⛔ RFC 3062 lets a server GENERATE one and return it. This does not:
+		// a password this server invented would have to be sent back over the
+		// connection and then written down by whoever received it, and the
+		// one place it is certain to end up is a terminal's scrollback.
+		return ldap.ExtendedResult{Result: ldap.Refuse(ldap.UnwillingToPerform,
+			"this server does not generate passwords: send the one you want")}, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if res, ok := s.writePassword(target, pm.new); !ok {
+		return ldap.ExtendedResult{Result: res}, nil
+	}
+	return ldap.ExtendedResult{Result: ldap.Result{Code: ldap.Success}}, nil
+}
+
+// writePassword is the half Modify and Extended share: write it, reload, and
+// turn a failure into the refusal a client should see.
+//
+// ⛔ Shared deliberately. The same rule stated at two call sites drifts, and
+// the two here would drift in the direction that matters -- one of them
+// eventually forgetting the reload, and answering Success while the running
+// server kept the old password.
+func (s *server) writePassword(target, password string) (ldap.Result, bool) {
+	if err := s.cfg.setPassword(target, password); err != nil {
+		if errors.Is(err, errNotOurs) {
+			return ldap.Refuse(ldap.UnwillingToPerform,
+				"%s is served from %s, which this server reads and does not write",
+				target, s.dir.Describe()), false
+		}
+		fmt.Fprintf(s.out, "changing the password for %s: %v\n", target, err)
+		return ldap.Refuse(ldap.Other, "the password could not be written"), false
+	}
+	if err := s.reloadLocal(); err != nil {
+		fmt.Fprintf(s.out, "the password for %s was written but this server did not reload it: %v\n", target, err)
+		return ldap.Refuse(ldap.Other,
+			"the password was written but this server did not reload it"), false
+	}
+	fmt.Fprintf(s.out, "%s changed their own password\n", target)
+	return ldap.Result{Code: ldap.Success}, true
 }
