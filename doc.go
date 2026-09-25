@@ -28,10 +28,17 @@
 //
 // An LDAP server is asked to prove people, so the refusals are the design:
 //
-//   - The UNAUTHENTICATED BIND. A bind with an empty password is answered
-//     SUCCESS by a real directory (RFC 4513 5.1.2) -- it means "I am
-//     anonymous", not "I proved this name" -- and a server that passes that
-//     through as proof lets anybody in as anybody. Refused here, always.
+//   - The UNAUTHENTICATED BIND. A bind carrying a NAME and an empty password
+//     (RFC 4513 5.1.2) establishes an anonymous state while naming somebody:
+//     the name "is not to be authenticated or otherwise validated", and a
+//     server that passes it through as proof lets anybody in as anybody.
+//     Refused with unwillingToPerform, which is what 5.1.2 asks for --
+//     invalidCredentials would say the password was wrong, and a person
+//     would retry one that was never the problem.
+//
+//     Its neighbour is NOT refused: 5.1.1, the ANONYMOUS bind, is an empty
+//     name AND an empty password, it is legitimate, and refusing it locks
+//     every client out of the root DSE that says how to authenticate.
 //
 //   - ANONYMOUS SEARCH. A directory that answers everybody publishes its
 //     people to everybody. A reader binds first.
