@@ -222,18 +222,27 @@ so the client can send the `^A` that ends the exchange.
 ### The library this needed
 
 `glauth/ldap` refused every SASL bind outright, so there was no field to put a
-token in. [tannevaled/ldap](https://github.com/tannevaled/ldap) is a fork that
-adds an optional `SASLBinder`, offered back upstream — along with two defects
-found on the way there: a failed bind left the connection with the *previous*
-bind's authorisation (RFC 4511 4.2.1), and a response carrying any optional
-field was read as a malformed packet.
+token in — which is why this page said, for months, that OIDC at the bind
+needed "the shape deciding rather than guessing". It did not. RFC 7628 has had
+a field for a token since 2015; the library would not carry one.
 
-⛔ It is a **bridge, not a destination**. Six defects turned up in it, five of
-them in the fifty lines of the bind path — and one, since fixed, was that the
-filter evaluator dropped everything after the first `*`, so `(uid=svc-*-prod)`
-returned `svc-web-stage`. In a directory that is disclosure. `go-authn/ldap`,
-an LDAP server written from RFC 4511/4513/4515/7628, replaces it; this
-dependency is one line.
+That is now [`go-authn/ldap`](https://github.com/go-authn/ldap), written here
+rather than borrowed, after **six defects** turned up in the parts of the
+borrowed one this server actually used — five of them in the fifty lines of
+the bind path. Among them:
+
+- a **failed bind left the connection with the previous bind's
+  authorisation** (RFC 4511 §4.2.1), so on a pooled connection — how every
+  LDAP client library is used — the person whose password was refused was
+  served as the last one who succeeded;
+- a **substring filter was evaluated as a broader one**, so
+  `(uid=svc-*-prod)` returned `svc-web-stage`. In a directory that is
+  disclosure, and it is silent, because every entry returned is a real entry.
+
+Those fixes are offered back as glauth/ldap
+[#11](https://github.com/glauth/ldap/pull/11),
+[#12](https://github.com/glauth/ldap/pull/12) and
+[#13](https://github.com/glauth/ldap/pull/13).
 
 ## ldaps:// or StartTLS, and not both at once
 
@@ -339,8 +348,24 @@ links.
 ## Not yet
 
 - **Writes.** Nothing here modifies anything: `add`, `modify` and `delete` are
-  answered by the library's default, which refuses them. A directory this
-  server fronts is edited where it lives.
+  answered `unwillingToPerform`, because this server implements no handler for
+  them. That is *"I do not do that"* — a different statement from
+  `insufficientAccessRights`, *"you may not do that"*, and it sends an
+  administrator somewhere else.
+
+  What changed is that a correct write is now **expressible**. The library
+  this used to stand on held a modify as three buckets — add, delete,
+  replace — so
+
+  ```
+  delete member=alice; add member=alice     (alice stays)
+  add member=alice; delete member=alice     (alice goes)
+  ```
+
+  arrived as the *same request*, and no server built on it could tell which
+  was asked. `go-authn/ldap` carries them as an **ordered list**, which is
+  what RFC 4511 §4.6 requires. A directory this server fronts is still edited
+  where it lives; the obstacle to changing that is now policy, not shape.
 
 ## Licence
 
