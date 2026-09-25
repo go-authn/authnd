@@ -4,7 +4,7 @@ go 1.26.4
 
 require (
 	github.com/go-authn/directory v0.5.0
-	github.com/go-authn/ldap v0.0.0-20260925053855-76985b70c5f5
+	github.com/go-authn/ldap v0.1.0
 	github.com/go-authn/oidc v0.1.0
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/hashicorp/hcl/v2 v2.25.0
