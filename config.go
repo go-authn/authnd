@@ -24,6 +24,12 @@ import (
 // listener from another managed by hand, and neither has to know about the
 // other.
 type config struct {
+	// files are the .hcl files this was read from, in the order they were
+	// read. They are kept because a write has to go back to the FILE that
+	// declares somebody: the parsed struct says a person exists, not where
+	// the sentence about them lives.
+	files []string
+
 	// Listen is where to answer. The default is loopback, because a
 	// directory that appears on every interface the moment it starts is a
 	// decision somebody should make on purpose.
@@ -169,6 +175,7 @@ func loadConfig(paths []string) (*config, error) {
 	if diags := gohcl.DecodeBody(hcl.MergeBodies(bodies), nil, cfg); diags.HasErrors() {
 		return nil, diags
 	}
+	cfg.files = files
 	if err := cfg.check(); err != nil {
 		return nil, err
 	}
