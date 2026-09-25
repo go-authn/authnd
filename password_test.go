@@ -40,6 +40,12 @@ func TestAPasswordGoesWhereTheBlockKeepsIt(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	pwPath := filepath.Join(dir, "bob.pw")
+	// ⛔ A path goes into HCL SOURCE here, and on Windows it holds
+	// backslashes: C:\Users\RUNNER~1\... makes \U an escape sequence and the
+	// file stops parsing. Forward slashes are a valid HCL string and Windows
+	// opens them perfectly well, so the fixture uses those and the code under
+	// test still sees a real path.
+	hclPath := filepath.ToSlash(pwPath)
 	if err := os.WriteFile(pwPath, []byte("hunter2\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +57,7 @@ base_dn = "dc=example,dc=org"
 user "alice" { password = "hunter2" }
 
 user "bob" {
-  password_file = "` + pwPath + `"
+  password_file = "` + hclPath + `"
 }
 `
 	path := write(t, dir, "c.hcl", body)
@@ -425,10 +431,20 @@ user "alice" { password = "hunter2" }
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// ⛔ Chmod SUCCEEDS on Windows and changes nothing a directory write
+	// consults, so asking whether it returned an error is asking the wrong
+	// question -- the test then goes on to assert a failure that cannot
+	// happen. Ask whether the directory is actually unwritable instead,
+	// which is the property the rest of this depends on.
 	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Skipf("cannot make the directory read-only here: %v", err)
 	}
 	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+	if f, err := os.CreateTemp(dir, "probe-*"); err == nil {
+		f.Close()
+		os.Remove(f.Name())
+		t.Skip("this platform still allows writing into a directory with mode 0500")
+	}
 
 	res, err = r.srv.Modify(context.Background(), session{dn: alice},
 		&ldap.ModifyRequest{DN: alice, Changes: replace("userPassword", "x")})
