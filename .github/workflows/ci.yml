@@ -128,7 +128,7 @@ jobs:
           AUTHND_REQUIRE_JUDGE: "1"
 
   coverage:
-    name: coverage floor (80%, standard is 100%)
+    name: coverage floor (88%, standard is 100%)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -150,9 +150,18 @@ jobs:
           AUTHND_REQUIRE_JUDGE: "1"
         run: |
           # THE ORG STANDARD IS 100%, AND THIS PROGRAM DOES NOT MEET IT.
-          # What is missing is mostly the signal handling in serve(): a test
-          # that sent this process a SIGTERM would end the run it is part of.
-          FLOOR=80.0
+          #
+          # The floor was 80% and the note said the gap was "mostly the
+          # signal handling in serve(): a test that sent this process a
+          # SIGTERM would end the run it is part of". That was true and it
+          # was not a reason -- the signal was never the interesting part.
+          # The loop now takes a context, the signal stays in serve(), and
+          # the shutdown path is tested: it must not return until the port
+          # is actually free.
+          #
+          # What is left is main() and a handful of error branches. The
+          # floor is RAISED, never lowered.
+          FLOOR=88.0
           go test -coverprofile=cover.out -coverpkg=./... ./... >/dev/null
           go tool cover -func=cover.out
           cov=$(go tool cover -func=cover.out | tail -1 | awk '{print $3}' | tr -d '%')
