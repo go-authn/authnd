@@ -190,11 +190,12 @@ func (s *server) localSource() (directory.Source, error) {
 
 // Close stops the server and gives back whatever the sources hold.
 //
-// The listener is not enough: glauth's Serve blocks on its own Quit channel
-// and closing the socket only ends the accept goroutine, leaving Serve --
-// and whoever waits for it -- exactly where it was. So a server that is
-// SERVING is stopped through the library, and one that never listened is
-// stopped by closing what it opened.
+// The listener is not enough, and the reason changed when the library did.
+// go-authn/ldap's Close stops the listeners AND closes every established
+// connection: a server that stopped accepting and left the established ones
+// answering looks stopped and is not, which is the shape of a restart that
+// does not take. So a server that is SERVING is stopped through the library,
+// and one that never listened is stopped by closing what it opened.
 func (s *server) Close() error {
 	s.mu.Lock()
 	serving, closed := s.serving, s.closed
