@@ -210,6 +210,28 @@ func (s *server) Close() error {
 	case s.ln != nil:
 		s.ln.Close()
 	}
+	// ⛔ And the listener WE opened, whatever the library did with it.
+	//
+	// go-authn/ldap tracks a listener inside Serve, and refuses to track one
+	// once Close has been called:
+	//
+	//	func (s *Server) track(ln) bool { if s.closing { return false } ... }
+	//	func (s *Server) Serve(ln) error { if !s.track(ln) { return net.ErrClosed } ... }
+	//
+	// Our serve() sets `serving` BEFORE ldap.Serve reaches track. A Close that
+	// lands in that window reads serving=true, takes the branch above, and
+	// closes the listeners the library knows about -- which is none of them
+	// yet. Serve then returns ErrClosed without closing the listener either,
+	// and the port stays held by a server that reported a clean stop.
+	//
+	// The window is nanoseconds on a native runner and open on an emulated
+	// one: TestShutdownWaitsForTheServerToActuallyStop failed this way on
+	// riscv64 and on s390x, on three different branches including main.
+	//
+	// Closing it twice is harmless; closing it never is the defect.
+	if s.ln != nil {
+		s.ln.Close()
+	}
 	s.realm.close()
 	if s.dir != nil {
 		return s.dir.Close()

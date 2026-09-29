@@ -145,3 +145,64 @@ func (l *lockedBuffer) String() string {
 	defer l.mu.Unlock()
 	return l.b.String()
 }
+
+// TestCloseFreesTheListenerTheLibraryNeverTracked pins the window that made
+// TestShutdownWaitsForTheServerToActuallyStop fail on riscv64 and on s390x --
+// on three different branches, one of them main, so it was never about the
+// dependency bump that happened to be under it.
+//
+// go-authn/ldap tracks a listener inside Serve and refuses to track one once
+// Close has been called:
+//
+//	func (s *Server) track(ln) bool  { if s.closing { return false } ... }
+//	func (s *Server) Serve(ln) error { if !s.track(ln) { return net.ErrClosed } ... }
+//
+// serve() sets `serving` BEFORE ldap.Serve reaches track. A Close landing in
+// that window read serving=true, closed the listeners the library knew about
+// -- none -- and Serve then returned ErrClosed without closing the listener
+// either. The port stayed held by a server that had reported a clean stop.
+//
+// Rather than race for that window, this names the state directly: the library
+// is already closing, and our server believes it is serving.
+func TestCloseFreesTheListenerTheLibraryNeverTracked(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := loadConfig([]string{write(t, dir, "c.hcl", `
+listen  = "127.0.0.1:0"
+base_dn = "dc=example,dc=org"
+reader "cn=reader,dc=example,dc=org" { password = "let me read" }
+user "dora" { password = "hunter2" }
+`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := open(cfg, &lockedBuffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.listen(); err != nil {
+		t.Fatal(err)
+	}
+	addr := srv.Addr()
+
+	// The control: the port really is taken, or the assertion below is free.
+	if ln, err := net.Listen("tcp", addr); err == nil {
+		ln.Close()
+		t.Fatal("the port was never held, so this test proves nothing")
+	}
+
+	// The window, stated rather than raced for.
+	srv.ldap.Close()
+	srv.mu.Lock()
+	srv.serving = true
+	srv.mu.Unlock()
+
+	if err := srv.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("the listener leaked: %v", err)
+	}
+	ln.Close()
+}
