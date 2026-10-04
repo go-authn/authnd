@@ -209,7 +209,11 @@ What follows from the one field, since none of it is obvious:
 - **Guessing is limited per name**, with go-authn/totp's defaults: after five
   wrong codes in a row a person is refused for fifteen minutes, the right code
   included, and after a hundred they are locked out until authnd restarts. The
-  count is kept in memory, per process.
+  count is kept in memory, per process. **Only a code behind the right password
+  is counted**: otherwise anybody who knew a name could freeze its owner with
+  five binds. Behind a wrong password the code is still computed, so the time
+  taken says nothing either way. A reader is counted under its DN as the
+  configuration spells it, so `CN=Reader` gets no fresh budget of its own.
 - **A secret too short to be one is refused at startup.** A `totp_secret` in a
   `user` or `reader` block under 128 bits (RFC 4226 R6) stops the server,
   naming the person, rather than failing every one of their logins later.

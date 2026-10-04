@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/go-authn/directory"
 	"github.com/go-authn/mfa"
@@ -34,6 +35,15 @@ import (
 //     password is wrong would say, in the time taken, whether the password or
 //     the code was the wrong one.
 //
+//   - ⛔ But a code is COUNTED only behind the right password. The limits on
+//     codes (a pause after a few wrong ones, a lockout after a hundred) are
+//     there against guessing codes, and they belong to the person: counting
+//     the code of a bind whose password was wrong let anybody who knew a NAME
+//     freeze its owner for fifteen minutes with five binds, and lock them out
+//     for good with a hundred. Behind a wrong password the code is still
+//     computed, against nothing that remembers, so the time taken says no
+//     more than it did.
+//
 //   - A person with no secret enrolled has REFUSED nothing. mfa counts that
 //     separately, and the server can then say "you have no second factor"
 //     rather than "wrong code" -- to the log, not to the client, which is told
@@ -58,31 +68,78 @@ func (s *server) factorsFor(id *directory.Identity, given string) ([]mfa.Factor,
 		return nil, fmt.Errorf("what was typed is %d characters, and the last %d of it are the code",
 			len(given), digits)
 	}
-	return []mfa.Factor{
-		knowledge{name: "your password", verify: id.Verify, given: password},
-		totp.Factor(id.Name(), id.TOTPSecret(), []byte(code), s.codes),
-	}, nil
+	pw := &knowledge{name: "your password", verify: id.Verify, given: password}
+	return []mfa.Factor{pw, s.codeBehind(pw, id.Name(), id.TOTPSecret(), code)}, nil
 }
+
+// codeBehind is the code, counted against its owner only when the password
+// in front of it was right.
+func (s *server) codeBehind(pw *knowledge, name string, secret []byte, code string) mfa.Factor {
+	return afterPassword{
+		Factor:    totp.Factor(name, secret, []byte(code), s.codes),
+		stateless: totp.Factor(name, secret, []byte(code), nil),
+		pw:        pw,
+		opts:      s.codes.Options,
+		secret:    secret,
+		code:      []byte(code),
+	}
+}
+
+// afterPassword asks the Verifier, which counts, only once the password has
+// been proven. Otherwise the code is checked with the same work and nothing
+// remembered, and refused whatever it was.
+type afterPassword struct {
+	mfa.Factor
+	stateless    mfa.Factor
+	pw           *knowledge
+	opts         totp.Options
+	secret, code []byte
+}
+
+func (f afterPassword) Verify(ctx context.Context) error {
+	if f.pw.Verify(ctx) == nil {
+		return f.Factor.Verify(ctx)
+	}
+	if len(f.secret) == 0 {
+		// Nobody enrolled: still said as such, which counts nothing either.
+		return f.stateless.Verify(ctx)
+	}
+	_ = totp.Verify(f.secret, f.code, f.opts)
+	return errNotCounted
+}
+
+var errNotCounted = fmt.Errorf("not looked at, since the password in front of it was wrong")
 
 // knowledge is the password, as a factor.
 //
 // It is here rather than in a library because what "the right password" means
 // belongs to the identity: a comparison this process can do, or a bind against
 // a directory that holds the password and will not give it up.
+//
+// The password is checked ONCE however often it is asked, because the code
+// behind it asks too, and a second check would be a second bind against a
+// directory -- and a second count against a directory's own lockout.
 type knowledge struct {
 	name   string
 	verify func(string) error
 	given  string
+
+	once sync.Once
+	err  error
 }
 
-func (k knowledge) Name() string   { return k.name }
-func (k knowledge) Kind() mfa.Kind { return mfa.Knowledge }
+func (k *knowledge) Name() string   { return k.name }
+func (k *knowledge) Kind() mfa.Kind { return mfa.Knowledge }
 
-func (k knowledge) Verify(context.Context) error {
-	if k.verify == nil {
-		return mfa.Unavailable(fmt.Errorf("nothing here can check a password for this person"))
-	}
-	return k.verify(k.given)
+func (k *knowledge) Verify(context.Context) error {
+	k.once.Do(func() {
+		if k.verify == nil {
+			k.err = mfa.Unavailable(fmt.Errorf("nothing here can check a password for this person"))
+			return
+		}
+		k.err = k.verify(k.given)
+	})
+	return k.err
 }
 
 // verifyPassword is the one-factor path: no policy, no code, just the
