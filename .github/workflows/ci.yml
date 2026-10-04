@@ -26,7 +26,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: stable
+          go-version: '1.27.1'
           check-latest: true
           cache: true
       # OpenLDAP's own client, as a judge for the LDAP directory this module
@@ -60,7 +60,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
-        with: { go-version: stable, check-latest: true, cache: true }
+        with: { go-version: '1.27.1', check-latest: true, cache: true }
       # A `replace` directive makes `go install pkg@version` refuse outright.
       # This is a COMMAND: a module nobody can install is a command nobody has.
       - run: |
@@ -80,7 +80,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
-        with: { go-version: stable, check-latest: true, cache: true }
+        with: { go-version: '1.27.1', check-latest: true, cache: true }
       # hcldir carries the tags a PROGRAM uses to leave out a database driver
       # or an LDAP client. They have to keep building here, or the program
       # that sets them finds out instead.
@@ -109,7 +109,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
-        with: { go-version: stable, check-latest: true, cache: true }
+        with: { go-version: '1.27.1', check-latest: true, cache: true }
       # ⛔ The judge has to be here too. It was in the `test` lane and nowhere
       # else, so every test that needs OpenLDAP's client SKIPPED in this one
       # -- silently, and the number this lane exists to measure was measured
@@ -133,7 +133,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
-        with: { go-version: stable, check-latest: true, cache: true }
+        with: { go-version: '1.27.1', check-latest: true, cache: true }
       # ⛔ The judge has to be here too. It was in the `test` lane and nowhere
       # else, so every test that needs OpenLDAP's client SKIPPED in this one
       # -- silently -- and the number this lane exists to measure was
@@ -186,7 +186,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
-        with: { go-version: stable, check-latest: true, cache: true }
+        with: { go-version: '1.27.1', check-latest: true, cache: true }
       - run: GOARCH=${{ matrix.goarch }} go build ./...
       - name: Install qemu-user-static
         if: matrix.goarch != 'amd64' && matrix.goarch != 'arm64' && matrix.goarch != '386'
