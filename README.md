@@ -86,6 +86,17 @@ managed both:
 
 Both are checked, with OpenLDAP's own client sending exactly them.
 
+### Two people whose names differ only by case
+
+A uid is compared ignoring case ([RFC 4519](https://www.rfc-editor.org/rfc/rfc4519)
+§2.39), and so is every DN. `user "backup"` in the file and a row `Backup` in a
+database are therefore one name to LDAP and two people to anything that
+compares bytes — which is a password change by one landing on the other. So a
+configuration whose sources between them hold two such names is **refused at
+startup**, naming both and where each came from. A password change is also
+authorized on the exact identity the connection bound as, not on a DN
+comparison, so the two controls do not depend on each other.
+
 ### Anonymous search
 
 A directory that answers everybody has published its people to everybody. A
@@ -152,6 +163,15 @@ What follows from the one field, since none of it is obvious:
   only that the bind failed.
 - **Readers do not carry a code** unless `mfa { readers = true }`: a service
   account has no phone. One that does gets a `totp_secret` of its own.
+- **No Kerberos realm beside it.** A `kerberos` block and an `mfa` block in
+  one configuration are refused at startup. A kinit proves the password and
+  nothing else — [RFC 4120](https://www.rfc-editor.org/rfc/rfc4120)'s
+  encrypted-timestamp pre-authentication is keyed by the password alone, and a
+  second factor needs OTP pre-authentication
+  ([RFC 6560](https://www.rfc-editor.org/rfc/rfc6560)) inside FAST, which this
+  KDC does not implement. A realm here would hand out tickets on one factor to
+  the people this block says need two, so the choice is made closed: one or
+  the other.
 
 `check` lists who cannot bind under the policy, which is the question to ask
 before turning it on.

@@ -33,7 +33,7 @@ require (
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-asn1-ber/asn1-ber v1.5.8
-	github.com/go-authn/kdc v0.1.0
+	github.com/go-authn/kdc v0.2.1
 	github.com/go-authn/mfa v0.2.0
 	github.com/go-authn/totp v0.1.0
 	github.com/go-ldap/ldap/v3 v3.4.14 // indirect

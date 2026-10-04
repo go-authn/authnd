@@ -176,7 +176,7 @@ func report(cmd *cobra.Command, cfg *config) error {
 			}
 			fmt.Fprintf(w, "%s\t%s\n", g, list(members))
 			for _, m := range members {
-				if _, known := srv.who[m]; !known {
+				if _, known := srv.who()[m]; !known {
 					strangers[g] = append(strangers[g], m)
 				}
 			}

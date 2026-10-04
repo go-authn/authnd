@@ -171,7 +171,7 @@ func (s *server) BindSASL(ctx context.Context, sess ldap.Session, req *ldap.Bind
 		s.refused(name, fmt.Errorf("the token is for %q and asks to act as %q; this server does not delegate", name, authzid))
 		return s.oidcChallenge("insufficient_scope"), nil
 	}
-	id, ok := s.who[name]
+	id, ok := s.who()[name]
 	if !ok {
 		// The token is good and the person is not here. Said to the log,
 		// because a client that learns which names exist has been handed the
