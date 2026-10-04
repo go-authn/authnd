@@ -33,6 +33,11 @@ reader "cn=reader,dc=example,dc=org" { password_file = "/etc/authnd/reader.pw" }
 # People written down here: a service account, or a small site's whole list.
 user "backup" { password_file = "/etc/authnd/backup.pw" }
 
+user "carol" {
+  nt_hash         = "…"   # MD4(UTF16LE(password)), 32 hex: a site that holds THAT, not the password
+  authorized_keys = ["ssh-ed25519 AAAA… carol@laptop"]   # published as sshPublicKey; or authorized_keys_file
+}
+
 group "operators" { members = ["backup"] }
 
 # And people who are somewhere else.
@@ -176,6 +181,8 @@ password:  hunter2314159
 mfa {
   factors        = 2
   distinct_kinds = true     # two things they KNOW are not two factors
+  # digits = 6, period = 30 (seconds) and window = 1 are the defaults. Each
+  # step of window is a step of somebody else's guessing time: set it on purpose.
 }
 
 user "tess" {
@@ -247,6 +254,8 @@ oidc {
   # Which claim names the person in THIS directory. The default order is
   # preferred_username, then email when email_verified is true, then sub.
   username_claim = "preferred_username"
+
+  # jwks_url skips discovery, for a provider that does not publish it.
 }
 ```
 
