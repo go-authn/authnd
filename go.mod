@@ -4,8 +4,8 @@ go 1.26.8
 
 require (
 	github.com/go-authn/directory v0.10.0
-	github.com/go-authn/ldap v0.5.0
-	github.com/go-authn/oidc v0.2.2
+	github.com/go-authn/ldap v0.5.1
+	github.com/go-authn/oidc v0.2.4
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/hashicorp/hcl/v2 v2.25.0
 	github.com/jackc/pgx/v5 v5.11.0
