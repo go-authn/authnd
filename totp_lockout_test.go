@@ -130,3 +130,30 @@ reader %q {
 		t.Errorf("three wrong codes under three spellings did not throttle the reader: %v", got)
 	}
 }
+
+// Somebody with no authenticator enrolled is still reported as such when the
+// password in front was wrong too: the administrator reading the log is told
+// what to fix, not that the server was built without a Verifier.
+func TestNobodyEnrolledIsSaidBehindAWrongPassword(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := loadConfig([]string{write(t, dir, "c.hcl", withMFA(t, dir, "\nmfa { factors = 2 }\n"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := open(cfg, &safeBuffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer srv.Close()
+	r, err := srv.Bind(context.Background(), nil, &ldap.BindRequest{Version: 3,
+		Name: "uid=gus,ou=people,dc=example,dc=org", Simple: []byte("not-swordfish123456")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Code != ldap.InvalidCredentials {
+		t.Fatalf("gus with a wrong password got %v", r.Code)
+	}
+	if said := srv.out.(*safeBuffer).String(); !strings.Contains(said, "enrolled") {
+		t.Errorf("the server did not say that gus has no second factor:\n%s", said)
+	}
+}
