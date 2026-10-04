@@ -392,6 +392,17 @@ func (c *config) checkKerberos() error {
 	if k == nil {
 		return nil
 	}
+	if c.MFA != nil {
+		// ⛔ Fail closed. A kinit proves the password and nothing else: RFC
+		// 4120's PA-ENC-TIMESTAMP is encrypted under a key derived from it,
+		// and carrying a second factor needs OTP pre-authentication (RFC 6560)
+		// inside FAST (RFC 6113), which this KDC does not implement. A realm
+		// here would issue tickets on one factor to the people the mfa block
+		// says need two, and a ticket opens everything a bind does.
+		return fmt.Errorf("kerberos and mfa together: the mfa block asks every bind for a password AND a code, " +
+			"and a kinit carries only the password -- this KDC has no second-factor pre-authentication, " +
+			"so a realm here would accept one factor where the mfa block demands two. Remove one of the blocks")
+	}
 	if k.Realm == "" {
 		return fmt.Errorf("kerberos: no realm: a realm has to be named (for example EXAMPLE.ORG)")
 	}

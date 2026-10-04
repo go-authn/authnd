@@ -15,8 +15,9 @@ import (
 // sorted is everybody, in a stable order: a listing that reshuffles itself
 // between two runs is one nobody can compare.
 func (s *server) sorted() []*directory.Identity {
-	out := make([]*directory.Identity, 0, len(s.who))
-	for _, id := range s.who {
+	who := s.who()
+	out := make([]*directory.Identity, 0, len(who))
+	for _, id := range who {
 		out = append(out, id)
 	}
 	slices.SortFunc(out, func(a, b *directory.Identity) int { return strings.Compare(a.Name(), b.Name()) })
@@ -38,7 +39,7 @@ func (s *server) groupNames() []string {
 		// source is down still publishes what its first one holds.
 		fmt.Fprintf(s.out, "the groups could not all be listed: %v\n", err)
 	}
-	for _, id := range s.who {
+	for _, id := range s.who() {
 		names = append(names, id.Groups()...)
 	}
 	slices.Sort(names)

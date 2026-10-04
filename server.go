@@ -14,8 +14,10 @@ import (
 	"github.com/go-authn/kdc"
 	"io"
 	"net"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-authn/directory"
@@ -28,14 +30,26 @@ import (
 
 // A server answers LDAP from the sources a configuration named.
 type server struct {
+	// cfg is the configuration this server started with, and it does not
+	// change while the server runs: a password change re-reads the files
+	// for the user blocks and for nothing else.
 	cfg *config
 	out io.Writer
 
 	dir *directory.Set
-	// who is everybody, by name, read once at startup. A change in a source
-	// is picked up by a restart -- see the note on reading in
+	// local is the first source in dir: the user blocks, swapped whole when
+	// a password change is written, so that everything reading through dir
+	// -- the KDC included -- sees the password the change wrote.
+	local *liveSource
+	// people is everybody, by name, read once at startup and swapped whole
+	// after a password change. A change in a source somebody else owns is
+	// picked up by a restart -- see the note on reading in
 	// github.com/go-authn/directory, which is where that decision lives.
-	who     map[string]*directory.Identity
+	//
+	// ⛔ Swapped, never edited. Every connection reads it without a lock,
+	// and a map written while another goroutine ranges over it ends the
+	// process. Read it through who(), once per operation.
+	people  atomic.Pointer[roster]
 	readers map[string]string // bind DN, lower-cased, to password
 	// readerSecrets is the one-time-code secret for a reader that carries
 	// one. A service account usually has no phone, so this is usually empty
@@ -73,7 +87,6 @@ type server struct {
 func open(cfg *config, out io.Writer) (*server, error) {
 	s := &server{
 		cfg: cfg, out: out,
-		who:           map[string]*directory.Identity{},
 		readers:       map[string]string{},
 		readerSecrets: map[string][]byte{},
 		peopleDN:      "ou=people," + cfg.BaseDN,
@@ -114,11 +127,13 @@ func open(cfg *config, out io.Writer) (*server, error) {
 	}
 	s.oidc = auth
 
-	local, err := s.localSource()
+	local, err := localSource(cfg)
 	if err != nil {
 		return nil, err
 	}
-	s.dir = directory.NewSet(local)
+	s.local = &liveSource{}
+	s.local.p.Store(local)
+	s.dir = directory.NewSet(s.local)
 	srcs, err := hcldir.OpenAll(cfg.Directories)
 	if err != nil {
 		s.dir.Close()
@@ -132,12 +147,15 @@ func open(cfg *config, out io.Writer) (*server, error) {
 		s.dir.Close()
 		return nil, err
 	}
-	for _, id := range ids {
-		s.who[id.Name()] = id
+	people, err := newRoster(ids, local.People...)
+	if err != nil {
+		s.dir.Close()
+		return nil, err
 	}
+	s.people.Store(people)
 	for _, g := range cfg.Groups {
 		for _, m := range g.Members {
-			if _, ok := s.who[m]; !ok {
+			if _, ok := people.byName[m]; !ok {
 				s.dir.Close()
 				return nil, fmt.Errorf("group %q has %q in it, who is not in %s", g.Name, m, s.dir.Describe())
 			}
@@ -148,12 +166,12 @@ func open(cfg *config, out io.Writer) (*server, error) {
 
 // localSource is the user and group blocks: a small site's whole list, or the
 // service accounts a big one keeps out of its directory.
-func (s *server) localSource() (directory.Source, error) {
+func localSource(cfg *config) (*directory.Static, error) {
 	static := &directory.Static{Name: "the configuration file", Groups: map[string][]string{}}
-	for _, g := range s.cfg.Groups {
+	for _, g := range cfg.Groups {
 		static.Groups[g.Name] = g.Members
 	}
-	for _, u := range s.cfg.Users {
+	for _, u := range cfg.Users {
 		opts := []directory.Option{directory.From("the configuration file")}
 		pw, err := secret(u.Password, u.PasswordFile, "user "+u.Name)
 		if err != nil {
@@ -295,7 +313,7 @@ func (s *server) listen() error {
 	}
 	s.ln = ln
 	fmt.Fprintf(s.out, "%s on %s, serving %d %s from %s\n",
-		s.scheme(), ln.Addr(), len(s.who), plural(len(s.who), "person", "people"), s.dir.Describe())
+		s.scheme(), ln.Addr(), len(s.who()), plural(len(s.who()), "person", "people"), s.dir.Describe())
 
 	r, err := s.openRealm()
 	if err != nil {
@@ -436,7 +454,7 @@ func (s *server) Bind(_ context.Context, _ ldap.Session, req *ldap.BindRequest) 
 	if !ok {
 		return ldap.Result{Code: ldap.InvalidCredentials}, nil
 	}
-	id, ok := s.who[name]
+	id, ok := s.who()[name]
 	if !ok {
 		return ldap.Result{Code: ldap.InvalidCredentials}, nil
 	}
@@ -640,18 +658,9 @@ func (s *server) Modify(ctx context.Context, sess ldap.Session, req *ldap.Modify
 		return ldap.WriteResult{Result: ldap.Refuse(ldap.InsufficientAccessRights,
 			"an anonymous connection has not said who it is")}, nil
 	}
-	target, ok := s.nameOf(req.DN)
+	target, refusal, ok := s.ownPassword(who, req.DN)
 	if !ok {
-		return ldap.WriteResult{Result: ldap.Refuse(ldap.NoSuchObject,
-			"%s is not a person this server publishes", req.DN)}, nil
-	}
-	// ⛔ Compared as DNs, not as strings. "uid=alice, ou=people,dc=example"
-	// and "uid=alice,ou=people,dc=example" are the same DN and differ as
-	// strings, and the string comparison is the one that lets nobody through
-	// while looking like it works.
-	if !ldap.EqualDN(who, s.dnOf(target)) {
-		return ldap.WriteResult{Result: ldap.Refuse(ldap.InsufficientAccessRights,
-			"a password may be changed only by the person it belongs to")}, nil
+		return ldap.WriteResult{Result: refusal}, nil
 	}
 
 	password, err := onlyAPasswordChange(req.Changes)
@@ -698,7 +707,7 @@ func onlyAPasswordChange(changes []ldap.Change) (string, error) {
 // reloadLocal re-reads the configuration files and refreshes the people this
 // server holds ITSELF.
 //
-// ⛔ The comment on `who` says sources are read once at startup and a change
+// ⛔ The comment on `people` says sources are read once at startup and a change
 // is picked up by a restart. That is right for a source somebody else owns --
 // polling a directory is a decision with a cost. It is WRONG for a change this
 // process just made: answering Success to a password change and then going on
@@ -709,24 +718,74 @@ func onlyAPasswordChange(changes []ldap.Change) (string, error) {
 // from what was written, which is the difference between believing the write
 // and checking it. Sources reached over a network are not touched and not
 // reopened.
+//
+// ⛔ Nothing is edited in place. The new people are built beside the old ones
+// and swapped in whole: connections read them without a lock, and the KDC
+// reads the local source through s.dir, so both see the change at once and
+// neither ever sees half of one. The configuration this server started with
+// stays the configuration it runs with -- the files are re-read for the user
+// blocks and nothing else, so an unrelated edit waiting on disk does not take
+// effect halfway because somebody changed a password. Callers hold s.mu, which
+// is what keeps two rebuilds from racing each other.
 func (s *server) reloadLocal() error {
 	cfg, err := loadConfig(s.cfg.files)
 	if err != nil {
 		return err
 	}
-	s.cfg = cfg
-	local, err := s.localSource()
+	local, err := localSource(cfg)
 	if err != nil {
 		return err
 	}
-	ids, err := local.Identities()
+	fresh, err := local.Identities()
 	if err != nil {
 		return err
 	}
-	for _, id := range ids {
-		s.who[id.Name()] = id
+	// The local source is asked first, so it owns every name it has; the
+	// others keep what they had at startup.
+	owned := map[string]bool{}
+	for _, id := range fresh {
+		owned[id.Name()] = true
 	}
+	ids := slices.Clone(fresh)
+	before := s.people.Load()
+	for name, id := range before.byName {
+		// Somebody the file held before and holds no longer is gone, as
+		// they are from the source set the KDC reads.
+		if !owned[name] && !before.local[name] {
+			ids = append(ids, id)
+		}
+	}
+	people, err := newRoster(ids, fresh...)
+	if err != nil {
+		return err
+	}
+	s.local.p.Store(local)
+	s.people.Store(people)
 	return nil
+}
+
+// ownPassword is the person whose password a session may change at dn: the
+// one it bound as, and nobody else.
+//
+// ⛔ The comparison is of IDENTITIES, not of DNs. ldap.EqualDN folds case, as
+// a DN comparison must (RFC 4514, and uid is caseIgnoreMatch in RFC 4519), so
+// a session bound as uid=Backup passed it for uid=backup -- two people to the
+// map they are kept in, one person to the DN comparison. The session's own
+// name is resolved exactly as Bind resolved it, must still be somebody this
+// server serves, and must be the target byte for byte. The DN comparison
+// stays as well, for the structure: "uid=alice, ou=people,dc=example" and
+// "uid=alice,ou=people,dc=example" are the same DN and differ as strings.
+func (s *server) ownPassword(bound, dn string) (string, ldap.Result, bool) {
+	target, ok := s.nameOf(dn)
+	if !ok {
+		return "", ldap.Refuse(ldap.NoSuchObject, "%s is not a person this server publishes", dn), false
+	}
+	self, ok := s.nameOf(bound)
+	if !ok || s.who()[self] == nil || self != target || !ldap.EqualDN(bound, s.dnOf(target)) {
+		return "", ldap.Refuse(ldap.InsufficientAccessRights,
+			"a password may be changed only by the person it belongs to"), false
+	}
+	return target, ldap.Result{}, true
 }
 
 // ExtendedNames is the extended operations this server answers, which the
@@ -759,14 +818,9 @@ func (s *server) Extended(ctx context.Context, sess ldap.Session, req *ldap.Exte
 	if pm.haveIdentity {
 		dn = pm.identity
 	}
-	target, ok := s.nameOf(dn)
+	target, refusal, ok := s.ownPassword(who, dn)
 	if !ok {
-		return ldap.ExtendedResult{Result: ldap.Refuse(ldap.NoSuchObject,
-			"%s is not a person this server publishes", dn)}, nil
-	}
-	if !ldap.EqualDN(who, s.dnOf(target)) {
-		return ldap.ExtendedResult{Result: ldap.Refuse(ldap.InsufficientAccessRights,
-			"a password may be changed only by the person it belongs to")}, nil
+		return ldap.ExtendedResult{Result: refusal}, nil
 	}
 	if pm.new == "" {
 		// ⛔ RFC 3062 lets a server GENERATE one and return it. This does not:
