@@ -131,6 +131,7 @@ userPassword: the new one
 | no old password, or a bare `replace: userPassword` | `insufficientAccessRights` |
 | an old password that is not the current one | `unwillingToPerform` |
 | anybody with no password at all (signs in with a token only) | `unwillingToPerform`: a bearer token is not a password, so it cannot set the first one either. An administrator sets it in the configuration. |
+| somebody served from a `users` block (a database, another directory) | `unwillingToPerform`: this server reads those sources and does not write them. Only the people written down in the configuration files can change a password here, and the change is written back into the file that declares them. |
 
 This is OpenLDAP's ppolicy behaviour with `pwdSafeModify` set
 (slapo-ppolicy(5)), with the result codes its `ppolicy.c` returns. RFC 3062 §3
@@ -153,7 +154,7 @@ listener that is not on the network at all:
 
 ```
 $ authnd check /etc/authnd.d
-publish_nt_hash needs cert_file and key_file: an NT hash IS the credential,
+authnd: publish_nt_hash needs cert_file and key_file: an NT hash IS the credential,
 and 0.0.0.0:3893 is not loopback, so it would cross a network in the clear
 ```
 
@@ -191,13 +192,20 @@ credential like any other. The checking is
 What follows from the one field, since none of it is obvious:
 
 - **The split is by length.** The last N characters are the code. A password
-  ending in digits is fine; a field *shorter* than a code is refused rather
+  ending in digits is fine; a field *no longer* than a code is refused rather
   than guessed at, because a short password cannot be told apart from a code.
 - **Both halves are always checked.** Returning early on a wrong password would
   say, in the time taken, which half was wrong.
 - **A code is used once.** It is valid for a whole step, so a server that
   accepts one twice accepts a replay — and every step up to the last accepted
   one is refused, not merely the same one.
+- **Guessing is limited per name**, with go-authn/totp's defaults: after five
+  wrong codes in a row a person is refused for fifteen minutes, the right code
+  included, and after a hundred they are locked out until authnd restarts. The
+  count is kept in memory, per process.
+- **A secret too short to be one is refused at startup.** A `totp_secret` in a
+  `user` or `reader` block under 128 bits (RFC 4226 R6) stops the server,
+  naming the person, rather than failing every one of their logins later.
 - **Nobody enrolled is not a refusal.** A person with no secret has answered
   nothing rather than answered wrongly, and the server's own output says
   *nobody enrolled an authenticator for this person* while the client is told
@@ -237,7 +245,7 @@ oidc {
   audience = "ldap"
 
   # Which claim names the person in THIS directory. The default order is
-  # preferred_username, then email, then sub.
+  # preferred_username, then email when email_verified is true, then sub.
   username_claim = "preferred_username"
 }
 ```
@@ -328,6 +336,31 @@ search until it has been upgraded, and says `confidentialityRequired`. That is
 what keeps `cert_file` a guarantee rather than an offer — which is what
 `publish_nt_hash` is allowed to rely on.
 
+## A Kerberos realm for the same people
+
+```hcl
+kerberos {
+  realm    = "EXAMPLE.ORG"
+  keytab   = "/etc/authnd/krb5.keytab"   # krbtgt/EXAMPLE.ORG, and a key per service
+  listen   = "127.0.0.1:88"              # the default; UDP and TCP both
+  lifetime = "10h"                       # the default, MIT's
+}
+```
+
+A `kerberos` block makes this a KDC as well as a directory, through
+[go-authn/kdc](https://github.com/go-authn/kdc): the same people are issued
+tickets instead of only being looked up. Startup refuses a realm with no name,
+one not in capitals, no keytab, or a keytab without `krbtgt/REALM`, and, as
+said above, a `kerberos` block beside an `mfa` block.
+
+A KDC needs the person's **password**, not only a way to check one, so a
+person whose source only verifies (an LDAP directory behind this one, a bcrypt
+column) can never be issued a ticket. `check` lists who can and who cannot.
+
+A password changed over LDAP reaches the realm at once: the KDC reads the same
+people the directory serves, so the old password stops working for `kinit` the
+moment it stops working for a bind.
+
 ## `check`, before you restart something people log in through
 
 ```
@@ -343,6 +376,7 @@ GROUP      MEMBERS
 engineers  dora and eli
 operators  backup
 
+a bind carries a password
 cn=reader,dc=example,dc=org may search; every other bound client may not
 sambaNTPassword is published on a loopback listener: it IS the credential, and
 whoever reads it authenticates as that person over NTLMv2
@@ -391,28 +425,32 @@ decides it. Nothing about this is a limitation of this program.
 
 | build | size | what it leaves out |
 |---|---|---|
-| everything | 23.8 MB | |
-| `-tags noldap` | 23.2 MB | the LDAP **client**, and the `users "ldap"` block |
-| `-tags nosql` | 11.7 MB | the three database drivers, and the `users "sql"` block |
-| `-tags nosql,noldap` | 11.0 MB | both |
+| everything | 26.6 MiB | |
+| `-tags noldap` | 26.3 MiB | the LDAP **client**, and the `users "ldap"` block |
+| `-tags nosql` | 15.1 MiB | the three database drivers, and the `users "sql"` block |
+| `-tags nosql,noldap` | 14.8 MiB | both |
+
+As the CI's build-tags lanes print them (linux/amd64, Go 1.27.1,
+`CGO_ENABLED=0`).
 
 The server itself is always there; the tags are about where the *people* come
 from. `nosql` is by a distance the biggest lever — the three drivers weigh
-**12.1 MB**, more than the rest of the program put together — and it is also
+**11.5 MiB**, close to half the binary — and it is also
 attack surface: code that was never compiled cannot be reached.
 
-Both lanes run the whole test suite, not a subset: the people arrive as `user`
-blocks instead, and every question about binds, searches and refusals is asked
-again. A tag lane that skipped its tests would prove only that the binary
-links.
+Each tag lane runs the whole test suite, not a subset: the people arrive as
+`user` blocks instead, and every question about binds, searches and refusals
+is asked again. A tag lane that skipped its tests would prove only that the
+binary links.
 
 ## Not yet
 
-- **Writes.** Nothing here modifies anything: `add`, `modify` and `delete` are
-  answered `unwillingToPerform`, because this server implements no handler for
-  them. That is *"I do not do that"* — a different statement from
-  `insufficientAccessRights`, *"you may not do that"*, and it sends an
-  administrator somewhere else.
+- **Writes**, beyond a person changing their own password (above). `add`,
+  `delete` and `modifyDN` are answered `unwillingToPerform`, because this server
+  implements no handler for them, and so is a `modify` of one's own entry
+  that touches anything but `userPassword`. That is *"I do not do that"* — a
+  different statement from `insufficientAccessRights`, *"you may not do
+  that"*, and it sends an administrator somewhere else.
 
   What changed is that a correct write is now **expressible**. The library
   this used to stand on held a modify as three buckets — add, delete,
