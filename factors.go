@@ -76,12 +76,11 @@ func (s *server) factorsFor(id *directory.Identity, given string) ([]mfa.Factor,
 // in front of it was right.
 func (s *server) codeBehind(pw *knowledge, name string, secret []byte, code string) mfa.Factor {
 	return afterPassword{
-		Factor:    totp.Factor(name, secret, []byte(code), s.codes),
-		stateless: totp.Factor(name, secret, []byte(code), nil),
-		pw:        pw,
-		opts:      s.codes.Options,
-		secret:    secret,
-		code:      []byte(code),
+		Factor: totp.Factor(name, secret, []byte(code), s.codes),
+		pw:     pw,
+		opts:   s.codes.Options,
+		secret: secret,
+		code:   []byte(code),
 	}
 }
 
@@ -90,7 +89,6 @@ func (s *server) codeBehind(pw *knowledge, name string, secret []byte, code stri
 // remembered, and refused whatever it was.
 type afterPassword struct {
 	mfa.Factor
-	stateless    mfa.Factor
 	pw           *knowledge
 	opts         totp.Options
 	secret, code []byte
@@ -101,8 +99,9 @@ func (f afterPassword) Verify(ctx context.Context) error {
 		return f.Factor.Verify(ctx)
 	}
 	if len(f.secret) == 0 {
-		// Nobody enrolled: still said as such, which counts nothing either.
-		return f.stateless.Verify(ctx)
+		// Nobody enrolled: still said as such. The Verifier answers that
+		// before it looks at anything, so nothing is counted either.
+		return f.Factor.Verify(ctx)
 	}
 	_ = totp.Verify(f.secret, f.code, f.opts)
 	return errNotCounted

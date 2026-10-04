@@ -34,8 +34,8 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-asn1-ber/asn1-ber v1.5.8
 	github.com/go-authn/kdc v0.3.3
-	github.com/go-authn/mfa v0.3.0
-	github.com/go-authn/totp v0.2.0
+	github.com/go-authn/mfa v0.4.0
+	github.com/go-authn/totp v0.3.0
 	github.com/go-ldap/ldap/v3 v3.4.14 // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
