@@ -442,7 +442,12 @@ func (s *server) Bind(_ context.Context, _ ldap.Session, req *ldap.BindRequest) 
 		// A reader is a service account with no phone, so it carries a code
 		// only where the configuration says its readers do.
 		if s.wantsCode() && s.cfg.MFA.Readers {
-			return s.bindWithCode(bindDN, password, s.readerFactors(bindDN, want))
+			// ⛔ The reader's NAME, the key it was found by, not the bytes
+			// the client sent: the codes it used and the guesses it made are
+			// counted against it, and a DN in another case is the same
+			// reader, not a fresh one with a clean slate.
+			reader := strings.ToLower(bindDN)
+			return s.bindWithCode(reader, password, s.readerFactors(reader, want))
 		}
 		// Constant time: the comparison is against a secret, and the
 		// difference between "wrong at byte 1" and "wrong at byte 12" is
@@ -535,15 +540,13 @@ func (s *server) readerFactors(dn, want string) func(string) ([]mfa.Factor, erro
 				len(given), digits)
 		}
 		secret := s.readerSecrets[strings.ToLower(dn)]
-		return []mfa.Factor{
-			knowledge{name: "the reader password", verify: func(given string) error {
-				if !constantTimeEqual(given, want) {
-					return fmt.Errorf("wrong")
-				}
-				return nil
-			}, given: password},
-			totp.Factor(dn, secret, []byte(code), s.codes),
-		}, nil
+		pw := &knowledge{name: "the reader password", verify: func(given string) error {
+			if !constantTimeEqual(given, want) {
+				return fmt.Errorf("wrong")
+			}
+			return nil
+		}, given: password}
+		return []mfa.Factor{pw, s.codeBehind(pw, dn, secret, code)}, nil
 	}
 }
 
