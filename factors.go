@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"fmt"
 	"strings"
@@ -92,8 +93,15 @@ func verifyPassword(id *directory.Identity, given string) error {
 
 // constantTimeEqual is used where the comparison is against something this
 // process holds, rather than against a directory that will answer for us.
+//
+// ⛔ subtle.ConstantTimeCompare is constant-time only for inputs of the SAME
+// length: it returns at once when the lengths differ, so comparing a guess
+// against the secret itself answers "how long is it" one guess at a time. Both
+// sides are hashed first, and the comparison is of two 32-byte digests --
+// fixed length, whatever was typed.
 func constantTimeEqual(a, b string) bool {
-	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+	da, db := sha256.Sum256([]byte(a)), sha256.Sum256([]byte(b))
+	return subtle.ConstantTimeCompare(da[:], db[:]) == 1
 }
 
 // describePolicy says what a bind will be asked for, for `check` to print.

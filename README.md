@@ -97,6 +97,47 @@ startup**, naming both and where each came from. A password change is also
 authorized on the exact identity the connection bound as, not on a DN
 comparison, so the two controls do not depend on each other.
 
+### Changing a password proves the old one
+
+A person may change their own password, and nobody else's, through the RFC 3062
+password modify operation (what `ldappasswd` sends) or an RFC 4511 modify. In
+both, **the current password must be sent with the new one**, whatever the
+connection bound with. A session bound with an OAUTHBEARER token, which is
+short-lived and may be single-factor, could otherwise turn it into a permanent
+password that also works for `kinit`.
+
+```
+$ ldappasswd -H ldap://localhost:3893 -D uid=alice,ou=people,dc=example,dc=org \
+    -W -A -S
+```
+
+`-A` asks for the old password and `-S` for the new one. With `ldapmodify`, the
+change is a delete of the old value followed by an add of the new one, in one
+request:
+
+```
+dn: uid=alice,ou=people,dc=example,dc=org
+changetype: modify
+delete: userPassword
+userPassword: the old one
+-
+add: userPassword
+userPassword: the new one
+-
+```
+
+| Request | Answer |
+|---|---|
+| no old password, or a bare `replace: userPassword` | `insufficientAccessRights` |
+| an old password that is not the current one | `unwillingToPerform` |
+| anybody with no password at all (signs in with a token only) | `unwillingToPerform`: a bearer token is not a password, so it cannot set the first one either. An administrator sets it in the configuration. |
+
+This is OpenLDAP's ppolicy behaviour with `pwdSafeModify` set
+(slapo-ppolicy(5)), with the result codes its `ppolicy.c` returns. RFC 3062 §3
+allows it: "If oldPasswd is not present, the server MAY use other policy to
+determine whether or not to change the password." Before v0.7.0 a
+bound session could change its password without the old one.
+
 ### Anonymous search
 
 A directory that answers everybody has published its people to everybody. A

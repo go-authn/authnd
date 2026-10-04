@@ -104,7 +104,7 @@ user "backup" { password = "service-secret" }
 	// them: only the value names a person, and it is the value that must be
 	// exact.
 	res, err := r.srv.Modify(ctx, session{dn: "UID=backup,OU=People,DC=Example,DC=Org"},
-		&ldap.ModifyRequest{DN: target, Changes: replace("userPassword", "the owner's")})
+		&ldap.ModifyRequest{DN: target, Changes: safeChange("service-secret", "the owner's")})
 	if err != nil || res.Code != ldap.Success {
 		t.Fatalf("the owner, spelling the DN differently: %s %v", res.Code, err)
 	}
@@ -175,12 +175,15 @@ user "bob"   { password = "hunter2" }
 			errs <- "alice's bind: " + res.Code.String()
 			return
 		}
+		old := "hunter2"
 		for n := 0; time.Now().Before(stop); n++ {
-			res, err := c.Extended(ldap.OIDPasswordModify, passwdModifyValue("", fmt.Sprintf("pw-%d", n)))
+			next := fmt.Sprintf("pw-%d", n)
+			res, err := c.Extended(ldap.OIDPasswordModify, passwdModifyWithOld("", old, next))
 			if err != nil || res.Code != ldap.Success {
 				errs <- fmt.Sprintf("password change %d: %s %v", n, res.Code, err)
 				return
 			}
+			old = next
 		}
 	}()
 	wg.Wait()
@@ -259,7 +262,7 @@ kerberos {
 	if res, _ := c.Bind("uid=alice,ou=people,dc=example,dc=org", "oldpassword"); res.Code != ldap.Success {
 		t.Fatalf("binding: %s", res.Code)
 	}
-	if res, err := c.Extended(ldap.OIDPasswordModify, passwdModifyValue("", "newpassword")); err != nil ||
+	if res, err := c.Extended(ldap.OIDPasswordModify, passwdModifyWithOld("", "oldpassword", "newpassword")); err != nil ||
 		res.Code != ldap.Success {
 		t.Fatalf("changing the password: %s %v", res.Code, err)
 	}

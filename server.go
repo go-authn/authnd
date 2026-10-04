@@ -7,7 +7,6 @@ import (
 	"log/slog"
 
 	"context"
-	"crypto/subtle"
 	"crypto/tls"
 	"encoding/hex"
 	"fmt"
@@ -447,8 +446,9 @@ func (s *server) Bind(_ context.Context, _ ldap.Session, req *ldap.BindRequest) 
 		}
 		// Constant time: the comparison is against a secret, and the
 		// difference between "wrong at byte 1" and "wrong at byte 12" is
-		// measurable over a network.
-		if subtle.ConstantTimeCompare([]byte(password), []byte(want)) == 1 {
+		// measurable over a network. So is the length, which is why this is
+		// constantTimeEqual and not ConstantTimeCompare on the raw bytes.
+		if constantTimeEqual(password, want) {
 			return ldap.Result{Code: ldap.Success}, nil
 		}
 		return ldap.Result{Code: ldap.InvalidCredentials}, nil
@@ -666,45 +666,145 @@ func (s *server) Modify(ctx context.Context, sess ldap.Session, req *ldap.Modify
 		return ldap.WriteResult{Result: refusal}, nil
 	}
 
-	password, err := onlyAPasswordChange(req.Changes)
+	change, err := onlyAPasswordChange(req.Changes)
 	if err != nil {
 		return ldap.WriteResult{Result: ldap.Refuse(ldap.UnwillingToPerform, "%s", err)}, nil
+	}
+	id, refusal, ok := s.provesPassword(target, change.old, change.haveOld)
+	if !ok {
+		return ldap.WriteResult{Result: refusal}, nil
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if res, ok := s.writePassword(target, password); !ok {
+	if res, ok := s.writeProved(target, id, change.old, change.new); !ok {
 		return ldap.WriteResult{Result: res}, nil
 	}
 	return ldap.WriteResult{Result: ldap.Result{Code: ldap.Success}}, nil
 }
 
-// onlyAPasswordChange is the new password in a modify that asks for that and
-// nothing else.
+// passwordChange is what a modify asked for: the new password, and the old
+// one when the request carried it.
+type passwordChange struct {
+	old, new string
+	haveOld  bool
+}
+
+// onlyAPasswordChange is the password change in a modify that asks for that
+// and nothing else.
+//
+// Two shapes are understood:
+//
+//   - replace userPassword with one value, which proves nothing and is
+//     refused later for anybody who has a password (see provesPassword);
+//   - delete userPassword's ONE current value, then add the new one, which is
+//     RFC 4511 4.6's way of proving the old value: the changes are applied in
+//     order and atomically, so the delete -- and the whole request with it --
+//     fails unless the value deleted is the one held. It is also what
+//     OpenLDAP's ppolicy requires under pwdSafeModify.
+//
+// A delete with no value deletes every value, names none, and proves nothing.
+// An add before the delete is a different request: it holds two passwords for
+// a moment and proves nothing either.
 //
 // ⛔ RFC 4511 4.6 makes a modify ATOMIC: "the entire list of modifications is
 // performed, or none of it". A request that replaces userPassword AND adds a
 // group cannot be half-honoured, so one this cannot do entirely it refuses
 // entirely -- rather than doing the password and dropping the rest, which
 // would report success for something nobody asked for.
-func onlyAPasswordChange(changes []ldap.Change) (string, error) {
-	if len(changes) != 1 {
-		return "", fmt.Errorf("this server changes a password and nothing else, "+
-			"and %d changes were asked for in one modify", len(changes))
+func onlyAPasswordChange(changes []ldap.Change) (passwordChange, error) {
+	for _, c := range changes {
+		if !strings.EqualFold(c.Attribute.Name, "userPassword") {
+			return passwordChange{}, fmt.Errorf("this server changes userPassword and nothing else, not %s",
+				c.Attribute.Name)
+		}
 	}
-	c := changes[0]
-	if !strings.EqualFold(c.Attribute.Name, "userPassword") {
-		return "", fmt.Errorf("this server changes userPassword and nothing else, not %s",
-			c.Attribute.Name)
+	one := func(c ldap.Change, what string) (string, error) {
+		if len(c.Attribute.Values) != 1 {
+			return "", fmt.Errorf("%s is one value, and %d were given", what, len(c.Attribute.Values))
+		}
+		return string(c.Attribute.Values[0]), nil
 	}
-	if c.Operation != ldap.ReplaceValues {
-		return "", fmt.Errorf("a password is replaced, not %s", c.Operation)
+	switch {
+	case len(changes) == 1 && changes[0].Operation == ldap.ReplaceValues:
+		pw, err := one(changes[0], "a password")
+		return passwordChange{new: pw}, err
+	case len(changes) == 2 && changes[0].Operation == ldap.DeleteValues &&
+		changes[1].Operation == ldap.AddValues:
+		old, err := one(changes[0], "the old password deleted")
+		if err != nil {
+			return passwordChange{}, err
+		}
+		pw, err := one(changes[1], "the new password added")
+		return passwordChange{old: old, new: pw, haveOld: true}, err
 	}
-	if len(c.Attribute.Values) != 1 {
-		return "", fmt.Errorf("a password is one value, and %d were given",
-			len(c.Attribute.Values))
+	return passwordChange{}, fmt.Errorf("this server changes a password and nothing else: " +
+		"delete the old value and add the new one, in that order and in one modify")
+}
+
+// provesPassword is the identity at target, if the request proved the password
+// it holds now.
+//
+// ⛔ The bind does not count. A session may have been bound by something that
+// is not the password -- an OAUTHBEARER token, short-lived and possibly
+// single-factor -- and a change of password is what turns whatever bound the
+// session into a credential that outlives it and also works for kinit. So the
+// old password is asked for whatever the bind was, as OpenLDAP's ppolicy does
+// with pwdSafeModify set (slapo-ppolicy(5)), and as RFC 3062 section 3 allows:
+// "If oldPasswd is not present, the server MAY use other policy to determine
+// whether or not to change the password."
+//
+// The result codes are ppolicy.c's: insufficientAccessRights when the old
+// password is missing, unwillingToPerform when it is wrong. The manual page
+// does not list them; the source does, in ppolicy_modify
+// (servers/slapd/overlays/ppolicy.c, OpenLDAP commit 2b8cbe0a).
+//
+// Somebody with no password at all has nothing to prove, and is refused a
+// first one: such a person can only have bound with a token -- a simple bind
+// is a password check, and theirs has nothing to check against -- and a
+// bearer token is not a password. A first password is an administrator's to
+// set, in the configuration.
+//
+// go-authn/ldap's Session does not say how it was bound, and this does not
+// need it to: the rule is the same for every bind.
+func (s *server) provesPassword(target, old string, haveOld bool) (*directory.Identity, ldap.Result, bool) {
+	id := s.who()[target]
+	if id == nil {
+		return nil, ldap.Refuse(ldap.InsufficientAccessRights,
+			"a password may be changed only by the person it belongs to"), false
 	}
-	return string(c.Attribute.Values[0]), nil
+	if !id.Can(directory.Verifier) {
+		return nil, ldap.Refuse(ldap.UnwillingToPerform,
+			"%s has no password, and this session was bound with a token: "+
+				"a bearer token is not a password, and does not set the first one", target), false
+	}
+	if !haveOld {
+		return nil, ldap.Refuse(ldap.InsufficientAccessRights,
+			"a password change must send the old password with the new one"), false
+	}
+	if err := id.Verify(old); err != nil {
+		fmt.Fprintf(s.out, "%s's password change was refused: the old password did not verify: %v\n", target, err)
+		return nil, ldap.Refuse(ldap.UnwillingToPerform,
+			"the old password sent is not the current one"), false
+	}
+	return id, ldap.Result{}, true
+}
+
+// writeProved writes a change provesPassword accepted. Callers hold s.mu.
+//
+// ⛔ The proof was checked without the lock -- a check may be a bind against
+// another directory, and no other password change should wait on that -- so
+// it is checked again here if the identity changed in between. Two changes
+// sent with the same old password must not both succeed: the second one's
+// proof is the password the first one replaced.
+func (s *server) writeProved(target string, proved *directory.Identity, old, password string) (ldap.Result, bool) {
+	if now := s.who()[target]; now != proved {
+		if now == nil || now.Verify(old) != nil {
+			return ldap.Refuse(ldap.UnwillingToPerform,
+				"the old password sent is not the current one"), false
+		}
+	}
+	return s.writePassword(target, password)
 }
 
 // reloadLocal re-reads the configuration files and refreshes the people this
@@ -833,10 +933,14 @@ func (s *server) Extended(ctx context.Context, sess ldap.Session, req *ldap.Exte
 		return ldap.ExtendedResult{Result: ldap.Refuse(ldap.UnwillingToPerform,
 			"this server does not generate passwords: send the one you want")}, nil
 	}
+	id, refusal, ok := s.provesPassword(target, pm.old, pm.haveOld)
+	if !ok {
+		return ldap.ExtendedResult{Result: refusal}, nil
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if res, ok := s.writePassword(target, pm.new); !ok {
+	if res, ok := s.writeProved(target, id, pm.old, pm.new); !ok {
 		return ldap.ExtendedResult{Result: res}, nil
 	}
 	return ldap.ExtendedResult{Result: ldap.Result{Code: ldap.Success}}, nil

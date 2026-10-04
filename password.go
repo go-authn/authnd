@@ -35,6 +35,9 @@ const (
 type passwdModify struct {
 	identity, old, new string
 	haveIdentity       bool
+	// haveOld is whether oldPasswd was SENT, which is not whether it was
+	// empty: an empty one is present, and wrong.
+	haveOld bool
 }
 
 // decodePasswdModify reads the request value.
@@ -67,7 +70,7 @@ func decodePasswdModify(value []byte) (passwdModify, error) {
 		case tagUserIdentity:
 			req.identity, req.haveIdentity = s, true
 		case tagOldPasswd:
-			req.old = s
+			req.old, req.haveOld = s, true
 		case tagNewPasswd:
 			req.new = s
 		default:

@@ -44,6 +44,18 @@ func replace(attr string, value string) []ldap.Change {
 func TestOnlyAPasswordChangeIsAccepted(t *testing.T) {
 	t.Parallel()
 	two := append(replace("userPassword", "a"), replace("description", "b")...)
+	add := func(v ...string) ldap.Change {
+		c := ldap.Change{Operation: ldap.AddValues, Attribute: &ldap.Attribute{Name: "userPassword"}}
+		for _, s := range v {
+			c.Attribute.Values = append(c.Attribute.Values, []byte(s))
+		}
+		return c
+	}
+	del := func(v ...string) ldap.Change {
+		c := add(v...)
+		c.Operation = ldap.DeleteValues
+		return c
+	}
 	for _, tc := range []struct {
 		name    string
 		changes []ldap.Change
@@ -51,10 +63,12 @@ func TestOnlyAPasswordChangeIsAccepted(t *testing.T) {
 	}{
 		{"two changes at once", two, "and nothing else"},
 		{"another attribute", replace("description", "x"), "not description"},
-		{"an add rather than a replace", []ldap.Change{{
-			Operation: ldap.AddValues,
-			Attribute: &ldap.Attribute{Name: "userPassword", Values: [][]byte{[]byte("x")}},
-		}}, "is replaced, not"},
+		{"an add alone", []ldap.Change{add("x")}, "delete the old value and add the new one"},
+		{"a delete alone", []ldap.Change{del("x")}, "delete the old value and add the new one"},
+		{"an add before the delete", []ldap.Change{add("n"), del("o")}, "in that order"},
+		{"a delete of every value", []ldap.Change{del(), add("n")}, "is one value, and 0"},
+		{"two new values", []ldap.Change{del("o"), add("a", "b")}, "is one value, and 2"},
+		{"three changes", []ldap.Change{del("o"), add("n"), add("m")}, "in one modify"},
 		{"two values", []ldap.Change{{
 			Operation: ldap.ReplaceValues,
 			Attribute: &ldap.Attribute{Name: "userPassword",
@@ -67,8 +81,12 @@ func TestOnlyAPasswordChangeIsAccepted(t *testing.T) {
 		}
 	}
 	got, err := onlyAPasswordChange(replace("userpassword", "fine"))
-	if err != nil || got != "fine" {
-		t.Errorf("a plain password change: %q %v", got, err)
+	if err != nil || got != (passwordChange{new: "fine"}) {
+		t.Errorf("a plain replace: %+v %v", got, err)
+	}
+	got, err = onlyAPasswordChange([]ldap.Change{del("old"), add("new")})
+	if err != nil || got != (passwordChange{old: "old", new: "new", haveOld: true}) {
+		t.Errorf("delete the old, add the new: %+v %v", got, err)
 	}
 }
 
@@ -107,7 +125,7 @@ user "bob"   { password = "hunter2" }
 	// And the person themselves succeeds, and the running server answers the
 	// NEW password without a restart.
 	res, err := r.srv.Modify(context.Background(), session{dn: alice},
-		&ldap.ModifyRequest{DN: alice, Changes: replace("userPassword", "correct horse")})
+		&ldap.ModifyRequest{DN: alice, Changes: safeChange("hunter2", "correct horse")})
 	if err != nil || res.Code != ldap.Success {
 		t.Fatalf("alice changing her own: %s %v", res.Code, err)
 	}
@@ -230,7 +248,7 @@ user "alice" { password = "hunter2" }
 	// Her own, with the identity left out, which RFC 3062 says means "this
 	// connection".
 	if res, err := c.Extended(ldap.OIDPasswordModify,
-		value(map[int]string{tagNewPasswd: "correct horse"})); err != nil ||
+		passwdModifyWithOld("", "hunter2", "correct horse")); err != nil ||
 		res.Code != ldap.Success {
 		t.Fatalf("alice changing her own: %s %v", res.Code, err)
 	}
@@ -299,7 +317,7 @@ user "carol" { password = "hunter2" }
 		t.Fatal(err)
 	}
 	res, err := r.srv.Modify(context.Background(), session{dn: alice},
-		&ldap.ModifyRequest{DN: alice, Changes: replace("userPassword", "x")})
+		&ldap.ModifyRequest{DN: alice, Changes: safeChange("hunter2", "x")})
 	if err != nil || res.Code != ldap.UnwillingToPerform {
 		t.Errorf("somebody we only read: %s %v", res.Code, err)
 	}
@@ -334,7 +352,7 @@ user "alice" { password = "hunter2" }
 	}
 
 	res, err = r.srv.Modify(context.Background(), session{dn: alice},
-		&ldap.ModifyRequest{DN: alice, Changes: replace("userPassword", "x")})
+		&ldap.ModifyRequest{DN: alice, Changes: safeChange("hunter2", "x")})
 	if err != nil || res.Code != ldap.Other {
 		t.Errorf("an unwritable directory: %s %v", res.Code, err)
 	}
