@@ -138,7 +138,7 @@ mfa {
 
 user "tess" {
   password    = "…"
-  totp_secret = "JBSWY3DPEHPK3PXP"   # ⛔ this IS the second factor
+  totp_secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"   # ⛔ this IS the second factor
 }
 ```
 

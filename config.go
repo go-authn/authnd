@@ -4,6 +4,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/go-authn/totp"
 	"net"
 	"os"
 	"path/filepath"
@@ -277,7 +278,11 @@ func (c *config) check() error {
 			}
 		}
 		if u.TOTPSecret != "" {
-			if _, err := directory.ParseTOTPSecret(u.TOTPSecret); err != nil {
+			secret, err := directory.ParseTOTPSecret(u.TOTPSecret)
+			if err != nil {
+				return fmt.Errorf("user %q: %w", u.Name, err)
+			}
+			if err := secretLongEnough(secret); err != nil {
 				return fmt.Errorf("user %q: %w", u.Name, err)
 			}
 		}
@@ -438,4 +443,14 @@ func (k *kerberosBlock) lifetime() time.Duration {
 		return 0 // kdc.Config resolves zero to ten hours.
 	}
 	return d
+}
+
+// secretLongEnough refuses a one-time-code secret go-authn/totp would
+// refuse at every login (RFC 4226 R6: at least 128 bits): said at start,
+// with the person's name, rather than as a failed login nobody can explain.
+func secretLongEnough(secret []byte) error {
+	if len(secret) < totp.MinSecret {
+		return fmt.Errorf("totp_secret is %d bits, and RFC 4226 requires at least %d: enrol again with a longer secret", 8*len(secret), 8*totp.MinSecret)
+	}
+	return nil
 }

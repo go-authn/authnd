@@ -114,6 +114,9 @@ func open(cfg *config, out io.Writer) (*server, error) {
 			if err != nil {
 				return nil, fmt.Errorf("reader %q: %w", r.DN, err)
 			}
+			if err := secretLongEnough(secret); err != nil {
+				return nil, fmt.Errorf("reader %q: %w", r.DN, err)
+			}
 			s.readerSecrets[strings.ToLower(r.DN)] = secret
 		}
 	}

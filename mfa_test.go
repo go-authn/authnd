@@ -173,8 +173,8 @@ func TestMFABlocksThatCannotWork(t *testing.T) {
 
 // The secrets these tests use. tess has one, gus does not.
 const (
-	tessSecretB32   = "JBSWY3DPEHPK3PXP"
-	readerSecretB32 = "MFRGGZDFMZTWQ2LK"
+	tessSecretB32   = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+	readerSecretB32 = "MFRGGZDFMZTWQ2LKMFRGGZDFMZTWQ2LK"
 )
 
 var tess, readerSecret = mustSecret(tessSecretB32), mustSecret(readerSecretB32)

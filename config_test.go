@@ -119,6 +119,15 @@ func TestConfigurationsThatCannotWork(t *testing.T) {
 			"publish_nt_hash needs cert_file and key_file",
 		},
 		{
+			"a one-time-code secret under 128 bits",
+			`base_dn = "dc=example,dc=org"
+			 user "alice" {
+			   password    = "x"
+			   totp_secret = "JBSWY3DPEHPK3PXP"
+			 }`,
+			`user "alice": totp_secret is 80 bits`,
+		},
+		{
 			"half a TLS configuration",
 			`base_dn   = "dc=example,dc=org"
 			 cert_file = "/etc/authnd/cert.pem"
