@@ -479,6 +479,20 @@ binary links.
   what RFC 4511 §4.6 requires. A directory this server fronts is still edited
   where it lives; the obstacle to changing that is now policy, not shape.
 
+## Release binaries
+
+Each release carries `authnd` for linux, darwin and windows on amd64 and arm64
+(pure Go, `CGO_ENABLED=0`), a `SHA256SUMS` manifest, and a build provenance
+attestation per binary, made by this repository's release workflow at the
+tag. Check a download before running it:
+
+```sh
+sha256sum -c SHA256SUMS --ignore-missing
+gh attestation verify authnd-linux-amd64 --repo go-authn/authnd
+```
+
+`authnd --version` prints the tag it was built from.
+
 ## Licence
 
 BSD-3-Clause.
