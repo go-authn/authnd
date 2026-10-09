@@ -61,7 +61,7 @@ sudo systemctl daemon-reload
 | **Configuration** | `ExecStart=/usr/local/bin/authnd --config /etc/authnd`: every `.hcl` file in that directory, read as one, in name order. |
 | **State** | none of its own. TOTP lockout counts are kept in memory and reset at restart; the KDC's keys are the keytab the configuration names. `StateDirectory=authnd` provides `/var/lib/authnd` (0700, owned by `authnd`) for a SQLite database. |
 | **File system** | `ProtectSystem=strict`: read-only everywhere except `/var/lib/authnd`. A password change therefore needs the drop-in in [section 6](#6-letting-people-change-their-own-password). |
-| **Reload** | there is none. authnd does not handle `SIGHUP`, and it reads its configuration, TLS certificate and keytab once. After changing any of them: `systemctl restart authnd`. ⛔ Do not send it `SIGHUP`: it dies, and systemd counts that as a clean exit, so `Restart=on-failure` does not start it again. |
+| **Reload** | there is none: authnd reads its configuration, TLS certificate and keytab once. After changing any of them: `systemctl restart authnd`. Since v0.9.4 a `SIGHUP` (from logrotate, or a habit) is caught and logged, and authnd stays up. Before v0.9.4 it **killed** authnd, and systemd counted that as a clean exit, so `Restart=on-failure` did not start it again. |
 
 `systemd-analyze security authnd` rates it **1.4 OK**. What remains is what a
 network directory is:
@@ -423,7 +423,7 @@ On Ubuntu 24.04, systemd 255, arm64, with the v0.9.3 release binary:
 - `ldappasswd` refused without the drop-in and accepted with
   `ReadWritePaths=/etc/authnd/passwords`, the new password then working for
   both the bind and `kinit`;
-- `SIGHUP` stopping the service for good;
+- `SIGHUP` stopping the service for good, on v0.9.3; v0.9.4 catches it and stays up;
 - the upgrade (v0.9.2 to v0.9.3), the roll back and the uninstall, as written.
 
 Not run: a `users "ldap"` block against another directory, MySQL/MariaDB,

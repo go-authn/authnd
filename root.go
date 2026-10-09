@@ -111,7 +111,33 @@ func serve(cmd *cobra.Command, o *options, args []string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	defer survive(syscall.SIGHUP, cmd.OutOrStdout())()
 	return runUntil(ctx, cmd.OutOrStdout(), srv)
+}
+
+// survive catches sig and says so, rather than let it end the process.
+//
+// ⛔ SIGHUP used to KILL authnd -- Go's default for a signal nobody handles --
+// and systemd counts death by SIGHUP as a clean exit, so Restart=on-failure
+// did not start it again: one `kill -HUP` or one logrotate postrotate took a
+// directory down for good. authnd reads its configuration, certificate and
+// keytab once, so there is nothing to reload; it says that, and stays up.
+// The returned function stops catching.
+func survive(sig os.Signal, out io.Writer) func() {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, sig)
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-ch:
+				fmt.Fprintf(out, "%v: authnd does not reload; restart it to apply a changed configuration, certificate or keytab\n", sig)
+			case <-done:
+				return
+			}
+		}
+	}()
+	return func() { signal.Stop(ch); close(done) }
 }
 
 // runUntil serves until the server stops of its own accord or ctx ends.

@@ -19,12 +19,11 @@
 #     read-only.
 #   - /var/lib/authnd, for a SQLite database a `users "sql"` block may open.
 #
-# ⛔ There is no ExecReload. authnd does not handle SIGHUP, so a reload would
-# KILL it (Go's default for that signal) -- and systemd counts death by SIGHUP
-# as a clean exit, so Restart=on-failure does not bring it back (measured: the
-# unit went inactive with Result=success). The configuration, the TLS
-# certificate and the keytab are read once, at start: change any of them and
-# run `systemctl restart authnd`.
+# ⛔ There is no ExecReload: authnd reads its configuration, TLS certificate
+# and keytab once, at start. Change any of them and run `systemctl restart
+# authnd`. Since v0.9.4 a SIGHUP is caught and logged ("does not reload") and
+# authnd stays up; before, it KILLED authnd, and systemd counts death by
+# SIGHUP as a clean exit, so Restart=on-failure did not bring it back.
 
 [Unit]
 Description=authnd LDAP directory and Kerberos KDC
