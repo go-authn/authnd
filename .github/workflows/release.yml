@@ -76,6 +76,26 @@ jobs:
           done
           cd "$dist" && sha256sum authnd-* > SHA256SUMS && cat SHA256SUMS
 
+      # ⛔ EVERY binary, not one. Only the first build of a loop is clean when
+      # the loop itself dirties the tree (its first write lands in it), so a
+      # check of one binary can land on the only one that cannot fail:
+      # go-pkgx/bk shipped 13 dirty releases past an exact check on its first
+      # binary. go version -m reads any GOOS/GOARCH.
+      - name: Every binary is stamped with the tag, from a clean tree
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -eu
+          bad=0
+          for f in "$RUNNER_TEMP"/dist/authnd-*; do
+            mod=$(go version -m "$f" | awk '$1=="mod"{print $3}')
+            vm=$(go version -m "$f" | awk -F= '/vcs.modified/{print $2}')
+            if [ "$mod" != "$TAG" ] || [ "$vm" != false ]; then
+              echo "::error::$(basename "$f"): module $mod, vcs.modified=$vm"; bad=1
+            fi
+          done
+          exit $bad
+
       # ⛔ A binary that does not know its own version is one nobody can match
       # to a security advisory. The release stops here rather than publish it.
       - name: The binary reports the tag it is published under
