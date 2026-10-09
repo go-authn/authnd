@@ -493,6 +493,10 @@ gh attestation verify authnd-linux-amd64 --repo go-authn/authnd
 
 `authnd --version` prints the tag it was built from.
 
+To run it as a systemd service -- the account, a hardened unit, a
+configuration for each source, TLS, the Kerberos realm, upgrades and roll
+back -- see [docs/install.md](docs/install.md).
+
 ## Licence
 
 BSD-3-Clause.
