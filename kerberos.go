@@ -93,20 +93,34 @@ func kerberosReport(out io.Writer, cfg *config, ids []*directory.Identity) {
 	if cfg.Kerberos == nil {
 		return
 	}
-	var can, cannot []string
+	// The reason differs, and a reason that does not fit the person is read as
+	// a defect in the person's entry: an NT hash IS a Kerberos key, the
+	// RC4-HMAC one (RFC 4757), just not one this realm uses.
+	var can, cannot, ntOnly, verified []string
 	for _, id := range ids {
-		if id.Can(directory.Password) {
+		switch {
+		case id.Can(directory.Password):
 			can = append(can, id.Name())
-		} else {
-			cannot = append(cannot, id.Name())
+			continue
+		case id.Can(directory.NTHash):
+			ntOnly = append(ntOnly, id.Name())
+		default:
+			verified = append(verified, id.Name())
 		}
+		cannot = append(cannot, id.Name())
 	}
 	fmt.Fprintf(out, "\nrealm %s on %s (udp and tcp), keytab %s\n",
 		cfg.Kerberos.Realm, cfg.Kerberos.Listen, cfg.Kerberos.Keytab)
 	fmt.Fprintf(out, "  can be issued a ticket: %s\n", list(can))
 	if len(cannot) > 0 {
 		fmt.Fprintf(out, "  CANNOT, whatever they type: %s\n", list(cannot))
-		fmt.Fprintln(out, "  a KDC must decrypt the pre-authentication with the person's key, "+
-			"and a source that only verifies a password cannot produce one")
+		fmt.Fprintln(out, "  a KDC must decrypt the pre-authentication with the person's key")
+	}
+	if len(ntOnly) > 0 {
+		fmt.Fprintf(out, "  %s: an NT hash is only the RC4-HMAC key (RFC 4757), and this realm issues "+
+			"aes256-cts-hmac-sha1-96 alone, whose key is derived from the password itself\n", list(ntOnly))
+	}
+	if len(verified) > 0 {
+		fmt.Fprintf(out, "  %s: the source only verifies a password, so it cannot produce any key\n", list(verified))
 	}
 }

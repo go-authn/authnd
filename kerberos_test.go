@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-authn/directory"
 	"github.com/jcmturner/gokrb5/v8/keytab"
 )
 
@@ -254,10 +255,31 @@ kerberos {
 		"realm " + testRealm,
 		"can be issued a ticket: alice",
 		"CANNOT, whatever they type: bob",
-		"a source that only verifies a password cannot produce one",
+		"bob: an NT hash is only the RC4-HMAC key",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the report does not say %q:\n%s", want, got)
+		}
+	}
+	// ⛔ This test used to require "a source that only verifies a password"
+	// for bob, whose source holds an NT hash: it pinned a reason that did not
+	// fit him. Each reason now goes to the person it fits, and only to them.
+	if strings.Contains(got, "only verifies") {
+		t.Errorf("bob holds an NT hash, yet was told his source only verifies:\n%s", got)
+	}
+	var mixed safeBuffer
+	kerberosReport(&mixed, cfg, []*directory.Identity{
+		directory.NewIdentity("alice", directory.WithPassword("pw")),
+		directory.NewIdentity("bob", directory.WithNTHash(make([]byte, 16))),
+		directory.NewIdentity("carol", directory.WithVerifier(func(string) error { return nil })),
+	})
+	for _, want := range []string{
+		"CANNOT, whatever they type: bob and carol\n",
+		"\n  bob: an NT hash",
+		"\n  carol: the source only verifies a password",
+	} {
+		if !strings.Contains(mixed.String(), want) {
+			t.Errorf("the report does not say %q:\n%s", want, mixed.String())
 		}
 	}
 	// And a realm everybody can use says nothing about who cannot, rather
