@@ -1,0 +1,96 @@
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# authnd: an LDAP server (and optionally a Kerberos KDC) for people held in a
+# SQL database, a configuration file or another directory.
+#
+# Installed as /etc/systemd/system/authnd.service, with the account from
+# packaging/sysusers.d/authnd.conf. See docs/install.md.
+#
+# What the code needs, and therefore all this unit grants:
+#
+#   - Privileged ports: LDAP 389, LDAPS 636, Kerberos 88 (udp and tcp). That is
+#     CAP_NET_BIND_SERVICE and no other capability.
+#   - Its configuration: every .hcl file in /etc/authnd, read at start.
+#   - No state of its own. TOTP lockout counts are kept in memory and reset at
+#     restart; the KDC's keys are the keytab the configuration names. The one
+#     write authnd makes is a person changing their own password, which goes
+#     back into the configuration file (or password_file) that declares them:
+#     see the drop-in in docs/install.md, because this unit keeps /etc
+#     read-only.
+#   - /var/lib/authnd, for a SQLite database a `users "sql"` block may open.
+#
+# ⛔ There is no ExecReload. authnd does not handle SIGHUP, so a reload would
+# KILL it (Go's default for that signal). The configuration, the TLS
+# certificate and the keytab are read once, at start: change any of them and
+# run `systemctl restart authnd`.
+
+[Unit]
+Description=authnd LDAP directory and Kerberos KDC
+Documentation=https://github.com/go-authn/authnd
+# A users "sql" or users "ldap" block is reached at startup, before authnd
+# listens, and a listen address on a specific IP needs that IP to exist.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+ExecStart=/usr/local/bin/authnd --config /etc/authnd
+Restart=on-failure
+RestartSec=5s
+
+User=authnd
+Group=authnd
+UMask=0077
+
+# The ports below 1024, and nothing else.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+
+# A place for a SQLite database: /var/lib/authnd, owned by authnd, 0700.
+StateDirectory=authnd
+StateDirectoryMode=0700
+
+# The file system: read-only everywhere except the state directory.
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectProc=invisible
+# ⛔ Not ProcSubset=pid: it hides /proc/sys, where Go reads
+# net/core/somaxconn, so every listener's backlog silently fell from the
+# kernel's 4096 to Go's fallback of 128 (measured with `ss -lnt` on Ubuntu
+# 24.04). ProtectKernelTunables= below already makes /proc/sys read-only.
+# A PostgreSQL or MariaDB on this machine is reached through its socket
+# (/run/postgresql/.s.PGSQL.5432, /run/mysqld/mysqld.sock). Connecting to a
+# socket is allowed on a read-only mount, so nothing needs adding for that.
+
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+PrivateIPC=yes
+RemoveIPC=yes
+
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallErrorNumber=EPERM
+
+# Not PrivateUsers=: inside a user namespace CAP_NET_BIND_SERVICE no longer
+# applies to the host's network, and the bind to 389 is refused (measured:
+# "listen tcp 0.0.0.0:389: bind: permission denied").
+#
+# Not IPAddressAllow=/IPAddressDeny=: which networks may ask a directory is
+# the site's to say. A drop-in is the place, see docs/install.md.
+
+[Install]
+WantedBy=multi-user.target
