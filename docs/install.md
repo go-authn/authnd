@@ -118,9 +118,9 @@ Before every restart:
 sudo -u authnd authnd check /etc/authnd
 ```
 
-`check` opens every source -- the database, the directory, the files -- and
-prints who would be published and what each can prove, without listening and
-without printing a secret.
+`check` opens every source -- the database, the directory, the files -- and the
+certificate and keytab, and prints who would be published and what each can
+prove, without listening and without printing a secret.
 
 ### People written in the file
 
@@ -150,6 +150,11 @@ line.
 returns, in this order, a name and then any of a password, an NT hash, SSH keys
 and a TOTP secret (a NULL is a credential that person does not have), and
 `groups` returns a group name and a member, one row per membership.
+
+The password column is compared **as it is stored**. authnd has no setting for
+a hashed column: a bcrypt or `crypt(3)` value there is taken for the password
+itself, and nobody binds. A directory that keeps only hashes belongs behind a
+`users "ldap"` source instead, which checks a password by binding.
 
 PostgreSQL on the same machine, through its socket and peer authentication, so
 the DSN holds no password:

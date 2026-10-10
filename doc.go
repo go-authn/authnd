@@ -61,8 +61,8 @@
 //
 // NTLMv2 needs the password or its MD4, so a file server asking authnd about
 // somebody can serve them over SMB only if the SOURCE holds enough for that.
-// A directory that only checks passwords -- an LDAP directory behind this one,
-// a bcrypt column -- answers WebDAV and cannot answer SMB, whatever authnd
+// A directory that only checks passwords -- an LDAP directory behind this one
+// -- answers WebDAV and cannot answer SMB, whatever authnd
 // does in between. `authnd check` prints that per person, from the same model
 // the file server uses: github.com/go-authn/directory.
 package main

@@ -367,8 +367,10 @@ one not in capitals, no keytab, or a keytab without `krbtgt/REALM`, and, as
 said above, a `kerberos` block beside an `mfa` block.
 
 A KDC needs the person's **password**, not only a way to check one, so a
-person whose source only verifies (an LDAP directory behind this one, a bcrypt
-column) can never be issued a ticket. `check` lists who can and who cannot.
+person whose source only verifies (an LDAP directory behind this one) can never
+be issued a ticket, and neither can one known only by an NT hash, which is the
+RC4 key and not the AES key this realm issues. `check` lists who can and who
+cannot, and why.
 
 A password changed over LDAP reaches the realm at once: the KDC reads the same
 people the directory serves, so the old password stops working for `kinit` the
@@ -397,8 +399,10 @@ whoever reads it authenticates as that person over NTLMv2
 this configuration can be served
 ```
 
-It opens every source and prints what would be published, without listening —
-and never a secret, only where each one comes from.
+It opens every source, the certificate and the keytab -- everything the server
+opens before it listens -- and prints what would be published, without
+listening, and never a secret, only where each one comes from. A port somebody
+else holds is the one failure it cannot see.
 
 ## The awkward half, said once
 
@@ -406,7 +410,7 @@ and never a secret, only where each one comes from.
 never sends a password to an SMB server; it sends a proof computed from one. So
 a file server asking authnd about somebody can serve them over SMB only if the
 *source* held enough for that — a password, or the hash. A directory that only
-*checks* passwords (an LDAP directory behind this one, a bcrypt column) answers
+*checks* passwords (an LDAP directory behind this one) answers
 WebDAV and can never answer SMB, whatever authnd does in between.
 
 `check` prints that per person, and `publish_nt_hash` is the switch that
