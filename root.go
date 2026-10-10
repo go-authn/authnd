@@ -178,6 +178,20 @@ func report(cmd *cobra.Command, cfg *config) error {
 	}
 	defer srv.Close()
 
+	// ⛔ Everything the server opens before it listens, check opens too. It
+	// did not: a certificate that does not load and a keytab without
+	// krbtgt/REALM both passed with "this configuration can be served", and
+	// the restart that followed exited 1. What check cannot know without
+	// listening -- whether a port is free -- is the only thing left out.
+	if cfg.tls() {
+		if _, err := srv.loadCert(); err != nil {
+			return err
+		}
+	}
+	if _, err := srv.openRealm(); err != nil {
+		return err
+	}
+
 	fmt.Fprintf(out, "%s://%s, base %s\n\n", srv.scheme(), cfg.Listen, cfg.BaseDN)
 
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
@@ -251,6 +265,21 @@ func report(cmd *cobra.Command, cfg *config) error {
 				"and whoever reads it IS that person until it expires\n")
 		}
 	}
+	// Who cannot bind with a password at all. A simple bind is checked against
+	// the password or a password check; an NT hash is neither -- it is what an
+	// SMB server needs, published for one with publish_nt_hash -- so a person
+	// known only by one is listed above and refused at every bind.
+	var hashOnly []string
+	for _, id := range srv.sorted() {
+		if !id.Can(directory.Verifier) {
+			hashOnly = append(hashOnly, id.Name())
+		}
+	}
+	if len(hashOnly) > 0 {
+		fmt.Fprintf(out, "%s cannot bind with a password: %s only what an SMB server needs (an NT hash), "+
+			"which a bind cannot be checked against\n",
+			list(hashOnly), plural(len(hashOnly), "the source holds", "their sources hold"))
+	}
 	if srv.wantsCode() {
 		var without []string
 		for _, id := range srv.sorted() {
@@ -259,13 +288,23 @@ func report(cmd *cobra.Command, cfg *config) error {
 			}
 		}
 		if len(without) > 0 {
-			fmt.Fprintf(out, "%s %s no second factor here, and cannot bind while one is required\n",
-				list(without), plural(len(without), "has", "have"))
+			// With an oidc block they are not locked out: a token whose amr
+			// names two kinds of factor satisfies the policy (observed). The
+			// sentence used to say "cannot bind", which was true only of the
+			// password field.
+			if srv.oidc != nil {
+				fmt.Fprintf(out, "%s %s no second factor here, so a password cannot satisfy this policy; "+
+					"a token whose amr names two kinds still can\n",
+					list(without), plural(len(without), "has", "have"))
+			} else {
+				fmt.Fprintf(out, "%s %s no second factor here, and cannot bind while one is required\n",
+					list(without), plural(len(without), "has", "have"))
+			}
 		}
 	}
 
 	if len(srv.readers) == 0 {
-		fmt.Fprintln(out, "no reader is declared: nothing may search, and every bind still works")
+		fmt.Fprintln(out, "no reader is declared: nothing may search, and binds are not affected")
 	} else {
 		var names []string
 		for _, r := range cfg.Readers {

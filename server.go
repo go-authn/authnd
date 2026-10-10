@@ -291,10 +291,10 @@ func (s *server) listen() error {
 		return err
 	}
 	if s.cfg.tls() {
-		cert, err := tls.LoadX509KeyPair(s.cfg.CertFile, s.cfg.KeyFile)
+		cert, err := s.loadCert()
 		if err != nil {
 			ln.Close()
-			return fmt.Errorf("the certificate: %w", err)
+			return err
 		}
 		cfg := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
 		srv.TLSConfig = cfg
@@ -314,9 +314,11 @@ func (s *server) listen() error {
 		}
 	}
 	s.ln = ln
-	fmt.Fprintf(s.out, "%s on %s, serving %d %s from %s\n",
-		s.scheme(), ln.Addr(), len(s.who()), plural(len(s.who()), "person", "people"), s.dir.Describe())
 
+	// ⛔ The realm opens BEFORE the listening line is printed. It used to be
+	// the other way round, so a keytab without krbtgt/REALM, or a port 88
+	// somebody else holds, first logged "ldap on ..., serving N people" and
+	// then exited 1: a journal whose last success line is a lie.
 	r, err := s.openRealm()
 	if err != nil {
 		s.ln.Close()
@@ -328,9 +330,23 @@ func (s *server) listen() error {
 			return err
 		}
 		s.realm = r
+	}
+	fmt.Fprintf(s.out, "%s on %s, serving %d %s from %s\n",
+		s.scheme(), ln.Addr(), len(s.who()), plural(len(s.who()), "person", "people"), s.dir.Describe())
+	if r != nil {
 		fmt.Fprintf(s.out, "realm %s on %s (udp and tcp)\n", r.cfg.Realm, r.cfg.Listen)
 	}
 	return nil
+}
+
+// loadCert reads cert_file and key_file. Shared with `check`, so that check
+// refuses a pair the server would refuse, with the same words.
+func (s *server) loadCert() (tls.Certificate, error) {
+	cert, err := tls.LoadX509KeyPair(s.cfg.CertFile, s.cfg.KeyFile)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("the certificate: %w", err)
+	}
+	return cert, nil
 }
 
 // serve answers until Close is called.
@@ -959,9 +975,16 @@ func (s *server) Extended(ctx context.Context, sess ldap.Session, req *ldap.Exte
 func (s *server) writePassword(target, password string) (ldap.Result, bool) {
 	if err := hcldir.SetPassword(s.cfg.files, target, password); err != nil {
 		if errors.Is(err, hcldir.ErrNotDeclared) {
+			// The person's OWN source, not the whole set: "dora is served from
+			// the configuration file, then a sqlite database" named a file that
+			// does not hold her.
+			from := s.dir.Describe()
+			if id := s.who()[target]; id != nil {
+				from = id.Where()
+			}
 			return ldap.Refuse(ldap.UnwillingToPerform,
 				"%s is served from %s, which this server reads and does not write",
-				target, s.dir.Describe()), false
+				target, from), false
 		}
 		fmt.Fprintf(s.out, "changing the password for %s: %v\n", target, err)
 		return ldap.Refuse(ldap.Other, "the password could not be written"), false
