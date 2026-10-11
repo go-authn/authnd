@@ -20,8 +20,8 @@ github.com/glauth/ldap v0.0.0-20260718202943-34c5f9b3cbf1 h1:897px/nmT3zCSW2aL9k
 github.com/glauth/ldap v0.0.0-20260718202943-34c5f9b3cbf1/go.mod h1:5ueZMujvJ5nuYPyBj6uQTPV4R1YshboRa/osaP4Emfs=
 github.com/go-asn1-ber/asn1-ber v1.5.8 h1:H9AZkK22UOmfX8J84ubyaZxKJZ3FMHVwn8swoMML7iQ=
 github.com/go-asn1-ber/asn1-ber v1.5.8/go.mod h1:hEBeB/ic+5LoWskz+yKT7vGhhPYkProFKoKdwZRWMe0=
-github.com/go-authn/directory v0.11.1 h1:7LrjCSG2Dl5szx3H/s3FFx8wT1ONNMeFq39UXVraGdA=
-github.com/go-authn/directory v0.11.1/go.mod h1:JzIgDzAps98mFdKJ+JjlwUewySmH7+fkPtxhss6s6vM=
+github.com/go-authn/directory v0.12.0 h1:yIsJpXaqqxv7dNCzX2tgvSOCeYX/JPFhYzF6RurPGhk=
+github.com/go-authn/directory v0.12.0/go.mod h1:JzIgDzAps98mFdKJ+JjlwUewySmH7+fkPtxhss6s6vM=
 github.com/go-authn/kdc v0.4.2 h1:k9DAyEjGGx/QP0TSBgovjUvHRlH1NPy40J6jZY6pmyM=
 github.com/go-authn/kdc v0.4.2/go.mod h1:FgcAktAzU0rozyoyEO6QfKceVU8+lKVAJuISI1ntbNY=
 github.com/go-authn/ldap v0.7.1 h1:tuw6U+9/xCVaZjQE5jLIo2867g/maoIdVxYUHAyDOPo=
