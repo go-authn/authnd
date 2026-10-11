@@ -631,14 +631,19 @@ func (s *server) groupEntries() []*ldap.Entry {
 		if err != nil {
 			continue
 		}
-		out = append(out, &ldap.Entry{
-			DN: "cn=" + name + "," + s.groupsDN,
-			Attributes: []*ldap.Attribute{
-				ldap.StringAttribute("objectClass", "top", "posixGroup"),
-				ldap.StringAttribute("cn", name),
-				ldap.StringAttribute("memberUid", members...),
-			},
-		})
+		attrs := []*ldap.Attribute{
+			ldap.StringAttribute("objectClass", "top", "posixGroup"),
+			ldap.StringAttribute("cn", name),
+		}
+		// ⛔ An empty group is published WITHOUT memberUid, not with an empty
+		// one: an attribute of an entry has at least one value (RFC 4511
+		// 4.1.7), and memberUid is MAY in posixGroup (RFC 2307). Before
+		// go-authn/directory v0.12.0 such a group was "no such group" and
+		// left out altogether, although a source listed it.
+		if len(members) > 0 {
+			attrs = append(attrs, ldap.StringAttribute("memberUid", members...))
+		}
+		out = append(out, &ldap.Entry{DN: "cn=" + name + "," + s.groupsDN, Attributes: attrs})
 	}
 	return out
 }
