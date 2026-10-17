@@ -63,10 +63,13 @@ somebody with the same name in the database. Group membership is the union.
 Every entry is a standard-schema entry, and **every entry published passes
 `schema.Validate`** ([go-authn/ldap](https://github.com/go-authn/ldap)'s
 package `schema`) against the schema this server publishes at `cn=Subschema`.
-An entry that fails is **not published**: it is absent from every search, the
-startup log names it, and `authnd check` lists it with each problem `Validate`
-found. Up to v0.10.2 every person was `top, person, posixAccount` with none of
-the attributes those classes require.
+An attribute a source gave that **no class of the entry allows is dropped**,
+and the entry is published with the rest; the startup log and `authnd check`
+name each dropped attribute, per person, with the classes that would carry it.
+An entry that still fails is **not published**: it is absent from every
+search, the startup log names it, and `authnd check` lists it with each problem
+`Validate` found. Up to v0.10.2 every person was `top, person, posixAccount`
+with none of the attributes those classes require.
 
 | a person with… | `objectClass` (every superclass listed, RFC 4512 §3.3) | `cn` |
 |---|---|---|
@@ -89,10 +92,32 @@ the attributes those classes require.
 ou and host), so a person without `sn` and without the POSIX trio has `uid`
 and no `cn`. A person's and a group's descriptive attributes
 ([go-authn/directory](https://github.com/go-authn/directory)'s
-`Identity.Attributes()` and `Set.GroupAttributes`) are published as given. When
-one does not belong to any class of the entry, the entry fails the schema and is
-held back. Examples: a `uidNumber` without `gidNumber` and `homeDirectory`, or a
-`mail` on an `account`.
+`Identity.Attributes()` and `Set.GroupAttributes`) are published as given,
+except one that no class of the entry allows, which is dropped:
+
+| given | the entry | dropped, and the reason `check` gives |
+|---|---|---|
+| `uidNumber`, `gidNumber`, no `homeDirectory`, no `sn` | `account, uidObject` | `uidNumber`, `gidNumber`: *no class of the entry allows it; posixAccount would* |
+| `mail`, no `sn` | `account, uidObject` | `mail`: *no class of the entry allows it; inetOrgPerson would* |
+| a type the schema does not define | the rest | it: *the schema served here does not define it* |
+| `mail` on a group without `gidNumber` | `groupOfNames` | `mail` |
+| two `homeDirectory` values with the POSIX trio | **withheld**: SINGLE-VALUE, nothing to drop | — |
+| a `gidNumber` that is not an integer | **withheld**: not of its syntax | — |
+
+Only what a source gave is dropped. An attribute authnd derives itself (`uid`,
+`cn`, `objectClass`, `sshPublicKey`, `sambaSID`, `sambaNTPassword`) that the
+schema refused would be a defect here, and withholds the entry. Which
+attributes are not allowed is `Validate`'s answer, and the entry is validated
+again after dropping.
+
+```
+$ authnd check authnd.hcl
+...
+hal has no homeDirectory: not a posixAccount, published as account, uidObject
+hal is published without uidNumber: no class of the entry allows it; posixAccount would
+hal is published without gidNumber: no class of the entry allows it; posixAccount and posixGroup would
+hal is published without mail: no class of the entry allows it; inetOrgPerson would
+```
 
 Why these choices:
 
@@ -185,8 +210,11 @@ person without the POSIX trio**, and one that filters on
 `(objectClass=posixGroup)` no longer sees a group without a `gidNumber`. This
 includes go-authn/directory's `ldapdir` up to v0.13.0, and so go-fileshare.
 Give people and groups those attributes, or point the consumer at
-`(objectClass=uidObject)`. ldapdir's default user filter is being widened to
-`(|(objectClass=posixAccount)(objectClass=account)(objectClass=uidObject))`.
+`(objectClass=uidObject)`. go-authn/directory#32 widens ldapdir's defaults:
+the user filter to
+`(|(objectClass=posixAccount)(objectClass=account)(objectClass=uidObject))`,
+and the group filter to `(|(objectClass=posixGroup)(objectClass=groupOfNames))`,
+with `member` DNs matched to the people ldapdir imported.
 
 ### `publish_nt_hash` needs a `samba` block
 
@@ -210,12 +238,21 @@ one. Otherwise it is `domain_sid-RID`, with RID = 2 × `uidNumber` +
 **without** `sambaNTPassword`, and `check` and the startup log say who. An odd
 base, or one below 1000, is refused: Samba would silently use another one.
 
-⛔ **`publish_nt_hash = true` without a `samba` block is refused at startup**,
-with a message saying what to add. v0.10.2 served that configuration, and so an
-upgrade that does not add the block stops. That is deliberate. The entry it
-published cannot pass the schema. The two quiet alternatives are dropping the
-attribute, which takes SMB away from everybody, and dropping the entry, which
-takes the person away. Both would happen with nothing on the console.
+⛔ **Breaking change for v0.10.x configurations: `publish_nt_hash = true`
+without a `samba` block is refused at startup**, with a message saying what to
+add. v0.10.x served that configuration; an upgrade that does not add the block
+stops, and `authnd check` refuses it the same way before the restart. Add:
+
+```hcl
+samba {
+  domain_sid = "S-1-5-21-..."   # the SMB server's domain SID: `net getlocalsid` prints it
+}
+```
+
+That is deliberate. The entry v0.10.x published cannot pass the schema. The
+two quiet alternatives are dropping the attribute, which takes SMB away from
+everybody, and dropping the entry, which takes the person away. Both would
+happen with nothing on the console.
 
 `samba.schema` carries the three Samba definitions. They are written from
 Samba's published OIDs, names, syntaxes and matching rules, not copied from
@@ -551,7 +588,7 @@ dora  a sqlite database  a password and 1 key  person, organizationalPerson, ine
 eli   a sqlite database  a password            account, posixAccount, uidObject                                                     uid, cn, uidNumber, gidNumber and homeDirectory
 fay   a sqlite database  a password            person, organizationalPerson, inetOrgPerson, uidObject                               uid, cn, sn and mail
 gus   a sqlite database  a password            account, uidObject                                                                   uid
-hal   a sqlite database  a password            NOT PUBLISHED (see below)                                                            uid and uidNumber
+hal   a sqlite database  a password            account, uidObject                                                                   uid
 ida   a sqlite database  a password            account, posixAccount, uidObject                                                     uid, cn, uidNumber, gidNumber and homeDirectory
 
 GROUP       MEMBERS       PUBLISHED AS
@@ -562,11 +599,12 @@ readers     fay and gus   groupOfNames
 
 fay has no uidNumber, gidNumber or homeDirectory: not a posixAccount, published as person, organizationalPerson, inetOrgPerson, uidObject
 gus has no uidNumber, gidNumber or homeDirectory: not a posixAccount, published as account, uidObject
-hal has no gidNumber or homeDirectory: not a posixAccount, and as account, uidObject the entry fails the schema (below)
+hal has no homeDirectory: not a posixAccount, published as account, uidObject
+hal is published without uidNumber: no class of the entry allows it; posixAccount would
+hal is published without gidNumber: no class of the entry allows it; posixAccount and posixGroup would
+hal is published without mail: no class of the entry allows it; inetOrgPerson would
 group alumni has no gidNumber and nobody in it: not a posixGroup, published as an organizationalRole (a groupOfNames needs a member)
 group readers has no gidNumber: not a posixGroup, published as a groupOfNames (member DNs, no memberUid)
-hal is NOT published: as account, uidObject it fails the schema:
-  - uidNumber is not allowed by any of the entry's object classes
 
 a bind carries a password
 cn=reader,dc=example,dc=org may search; every other bound client may not
@@ -584,7 +622,8 @@ else holds is the one failure it cannot see.
 off the entries a search would return, built and validated the same way. After
 the tables come the people who lack posixAccount's attributes and which ones,
 the groups without a `gidNumber` and what they are published as instead, the
-people whose NT hash has no `sambaSID` to go with it, and every entry that is
+people whose NT hash has no `sambaSID` to go with it, every attribute dropped
+because no class of its entry allows it (and which classes would), and every entry that is
 not published, with each problem `schema.Validate` named.
 
 ## The awkward half, said once

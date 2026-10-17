@@ -497,3 +497,55 @@ user "nan" {
 		t.Errorf("nan: %q", why)
 	}
 }
+
+// The second failure: "both" has an attribute to drop and another problem
+// dropping does not touch.
+func TestDroppingDoesNotMakeAnEntryPass(t *testing.T) {
+	r := start(t, `
+listen  = "127.0.0.1:0"
+base_dn = "dc=example,dc=org"
+user "both" {
+  password   = "x"
+  attributes = { mail = "both@example.org", seeAlso = "not a DN at all" }
+}
+`)
+	e := entriesOf(t, r.srv)["uid=both,ou=people,dc=example,dc=org"]
+	var v *schema.ValidationError
+	if !errors.As(e.invalid, &v) || !v.Has(schema.InvalidValue) {
+		t.Fatalf("both, whose seeAlso is not a DN, passed once mail was dropped: %v", e.invalid)
+	}
+	if v.Has(schema.NotAllowed) {
+		t.Errorf("the problem left is not the one dropping fixes: %v", e.invalid)
+	}
+	for _, p := range r.srv.publish().valid() {
+		if p.DN == e.DN {
+			t.Error("both is among the entries a search may return")
+		}
+	}
+}
+
+// Only what a source gave is dropped. An attribute this server put there
+// itself -- here a cn on a bare account -- that the schema refuses is a
+// mistake in this server, and the entry is withheld rather than published
+// without it.
+func TestADerivedAttributeIsNeverDropped(t *testing.T) {
+	r := start(t, `
+listen  = "127.0.0.1:0"
+base_dn = "dc=example,dc=org"
+user "x" { password = "x" }
+`)
+	e := r.srv.validated(&entry{
+		Entry: &ldap.Entry{DN: "uid=x,ou=people,dc=example,dc=org", Attributes: []*ldap.Attribute{
+			ldap.StringAttribute("objectClass", "top", "account", "uidObject"),
+			ldap.StringAttribute("uid", "x"),
+			ldap.StringAttribute("cn", "x"),
+		}},
+		given: map[string]bool{},
+	})
+	if e.invalid == nil {
+		t.Error("an entry whose derived cn no class allows was published without it")
+	}
+	if e.dropped != nil || values(e.Entry, "cn") == nil {
+		t.Errorf("the derived cn was dropped: %v", e.dropped)
+	}
+}
