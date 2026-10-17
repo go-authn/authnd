@@ -31,7 +31,11 @@ user "cat" {
 user "dan" { password = "x" }
 user "eve" {
   password   = "x"
-  attributes = { uidNumber = "1001" }
+  attributes = { uidNumber = "1001", mail = "eve@example.org" }
+}
+user "fred" {
+  password   = "x"
+  attributes = { uidNumber = "1002", gidNumber = "staff", homeDirectory = "/home/fred" }
 }
 
 group "staff" {
@@ -101,29 +105,43 @@ func TestARangeFilterComparesIntegers(t *testing.T) {
 	contains(t, out, "uid: cat", "numEntries: 1")
 }
 
-// The invariant, seen from a client: an entry that fails the schema is not in
-// any answer, whatever is asked; the others are.
+// The invariant, seen from a client. eve's uidNumber and mail belong to no
+// class of hers: they are dropped and she is published as an account. fred's
+// gidNumber "staff" is not an integer, which dropping cannot fix: he is in no
+// answer, whatever is asked.
 func TestAnEntryThatFailsTheSchemaIsNotPublished(t *testing.T) {
 	bin := needLDAPSearch(t)
 	r := start(t, schemaPeople)
 	out := readerSearch(t, bin, r, "-b", "dc=example,dc=org", "(objectClass=*)", "objectClass")
-	if strings.Contains(out, "uid=eve,") {
-		t.Errorf("eve, whose uidNumber no class of theirs allows, was published:\n%s", out)
+	if strings.Contains(out, "uid=fred,") {
+		t.Errorf("fred, whose gidNumber is not an integer, was published:\n%s", out)
 	}
 	contains(t, out,
 		"dn: uid=ann,ou=people,dc=example,dc=org",
 		"dn: uid=dan,ou=people,dc=example,dc=org",
+		"dn: uid=eve,ou=people,dc=example,dc=org",
 		"dn: cn=staff,ou=groups,dc=example,dc=org",
 		"dn: cn=readers,ou=groups,dc=example,dc=org",
 	)
-	out = readerSearch(t, bin, r, "-b", "ou=people,dc=example,dc=org", "(uid=eve)")
+	out = readerSearch(t, bin, r, "-b", "ou=people,dc=example,dc=org", "(uid=fred)")
 	contains(t, out, "# numResponses: 1\n") // the result alone: no entry
-	// And the startup output said so, with the problem.
-	contains(t, r.out.String(), "uid=eve,ou=people,dc=example,dc=org is NOT published", "uidNumber is not allowed")
+	// eve, without what she could not carry.
+	out = readerSearch(t, bin, r, "-LLL", "-b", "ou=people,dc=example,dc=org", "(uid=eve)")
+	contains(t, out, "objectClass: account", "uid: eve")
+	if strings.Contains(out, "uidNumber:") || strings.Contains(out, "mail:") {
+		t.Errorf("eve was published with an attribute no class of hers allows:\n%s", out)
+	}
+	// And the startup output said so, with the reasons.
+	contains(t, r.out.String(),
+		"uid=fred,ou=people,dc=example,dc=org is NOT published",
+		"the value \"staff\" of gidNumber is not of its syntax",
+		"uid=eve,ou=people,dc=example,dc=org is published without uidNumber: no class of the entry allows it; posixAccount would",
+		"uid=eve,ou=people,dc=example,dc=org is published without mail: no class of the entry allows it;",
+	)
 
 	// One class finds every person, whatever the structural class.
 	out = readerSearch(t, bin, r, "-b", "ou=people,dc=example,dc=org", "(objectClass=uidObject)", "uid")
-	contains(t, out, "uid: ann", "uid: ben", "uid: cat", "uid: dan", "numEntries: 4")
+	contains(t, out, "uid: ann", "uid: ben", "uid: cat", "uid: dan", "uid: eve", "numEntries: 5")
 }
 
 // A paged search (RFC 2696) asking for one attribute gets every person, a
@@ -132,11 +150,11 @@ func TestAPagedSearch(t *testing.T) {
 	bin := needLDAPSearch(t)
 	r := start(t, schemaPeople)
 	out := readerSearch(t, bin, r, "-E", "pr=2/noprompt", "-b", "ou=people,dc=example,dc=org", "(objectClass=uidObject)", "uidNumber")
-	contains(t, out, "uidNumber: 999", "uidNumber: 1000", "uidNumber: 10000", "numEntries: 4", "result: 0 Success")
+	contains(t, out, "uidNumber: 999", "uidNumber: 1000", "uidNumber: 10000", "numEntries: 5", "result: 0 Success")
 	if strings.Contains(out, "homeDirectory:") || strings.Contains(out, "\nuid: ") {
 		t.Errorf("a search for uidNumber returned other attributes:\n%s", out)
 	}
-	// Two people a page: dan, with no uidNumber, still counts.
+	// Two people a page: dan and eve, with no uidNumber, still count.
 	if n := strings.Count(out, "pagedresults: cookie="); n < 2 {
 		t.Errorf("%d paged-results controls, want two pages or more:\n%s", n, out)
 	}
@@ -160,16 +178,21 @@ func TestCheckSaysWhatTheSchemaDecided(t *testing.T) {
 		"NOT PUBLISHED (see below)",
 		// The people without posixAccount, and what each lacks.
 		"dan has no uidNumber, gidNumber or homeDirectory: not a posixAccount, published as account, uidObject",
-		"eve has no gidNumber or homeDirectory: not a posixAccount, and as account, uidObject the entry fails the schema (below)",
+		"eve has no gidNumber or homeDirectory: not a posixAccount, published as account, uidObject",
+		// What was dropped, per person, and why.
+		"eve is published without uidNumber: no class of the entry allows it; posixAccount would",
+		"eve is published without mail: no class of the entry allows it; ",
 		// The groups without gidNumber, and what they are instead.
 		"group readers has no gidNumber: not a posixGroup, published as a groupOfNames",
 		// The one held back, with Validate's words.
-		"eve is NOT published: as account, uidObject it fails the schema:",
-		"  - uidNumber is not allowed by any of the entry's object classes",
+		"fred is NOT published: as account, posixAccount, uidObject it fails the schema:",
+		"  - the value \"staff\" of gidNumber is not of its syntax",
 	)
 	// Row by row, since a shape can be a substring of a sentence.
 	for _, row := range [][]string{
 		{"dan ", "account, uidObject "},
+		{"eve ", "account, uidObject ", "uid"},
+		{"fred ", "NOT PUBLISHED"},
 		{"staff ", "ann and ben", "posixGroup"},
 		{"readers ", "cat and dan", "groupOfNames"},
 	} {

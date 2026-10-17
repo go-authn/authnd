@@ -415,6 +415,13 @@ func schemaReport(out io.Writer, pub publication) {
 		if e.noSID != "" {
 			lines = append(lines, fmt.Sprintf("%s is published without sambaNTPassword: %s", e.name, e.noSID))
 		}
+		for _, d := range e.dropped {
+			what := e.name
+			if e.group {
+				what = "group " + e.name
+			}
+			lines = append(lines, fmt.Sprintf("%s is published without %s: %s", what, d.name, d.why))
+		}
 	}
 	if rejected := pub.rejected(); len(rejected) > 0 {
 		for _, e := range rejected {

@@ -17,9 +17,13 @@ import (
 // The entries this server publishes, and the schema they are held to.
 //
 // ⛔ EVERY ENTRY PUBLISHED PASSES schema.Validate AGAINST THE SCHEMA THIS
-// SERVER PUBLISHES at cn=Subschema. One that does not is not published at all
-// -- not served with a problem in it -- and `authnd check` names it with every
-// problem Validate found. Up to v0.10.2 every person was "top, person,
+// SERVER PUBLISHES at cn=Subschema. An attribute a source gave that no class
+// of the entry allows -- a uidNumber without gidNumber and homeDirectory, a
+// mail on an account -- is DROPPED, the entry is published with the rest,
+// and the startup log and `authnd check` name it with the reason. An entry
+// that still fails is not published at all -- not served with a problem in
+// it -- and `authnd check` names it with every problem Validate found. Up to
+// v0.10.2 every person was "top, person,
 // posixAccount" with no uidNumber, gidNumber, homeDirectory or sn, which
 // broke four MUSTs at once, and sambaNTPassword sat on an entry with no class
 // that allows it. A client that reads the schema and believes it -- an
@@ -55,8 +59,20 @@ type entry struct {
 	// noSID is why a person whose NT hash would be published has no
 	// sambaSID, and so no sambaNTPassword.
 	noSID string
+	// given are the descriptions a source gave (Identity.Attributes,
+	// Set.GroupAttributes): the only attributes that may be dropped.
+	given map[string]bool
+	// dropped are the given attributes no class of the entry allows, left
+	// out so that the rest of the entry can be published.
+	dropped []dropped
 	// invalid is what schema.Validate said, nil for an entry that passes.
 	invalid error
+}
+
+// A dropped attribute is one a source gave that the entry could not carry,
+// and why.
+type dropped struct {
+	name, why string
 }
 
 // publication is what a search can return: the entries that pass the schema.
@@ -104,10 +120,69 @@ func (s *server) publish() publication {
 	return p
 }
 
-// validated is e with what Validate says about it.
+// validated is e with what Validate says about it, after dropping the given
+// attributes no class of the entry allows.
+//
+// ⛔ Only what a SOURCE gave is dropped. An attribute this server derives --
+// uid, cn, objectClass, sshPublicKey, sambaSID, sambaNTPassword -- that
+// Validate refuses is a mistake here, and the entry is withheld rather than
+// quietly published without it. And dropping never makes an entry pass that
+// fails for another reason: Validate is asked again, and a second failure
+// withholds the entry as before.
+//
+// Which attributes are not allowed is Validate's answer, not a second
+// reading of MUST and MAY here: two readings of the schema can disagree, and
+// the one that decides is Validate's.
 func (s *server) validated(e *entry) *entry {
-	e.invalid = e.Validate(s.schema)
+	err := e.Validate(s.schema)
+	var v *schema.ValidationError
+	if errors.As(err, &v) {
+		drop := map[string]string{}
+		for _, p := range v.Problems {
+			if (p.Kind == schema.NotAllowed || p.Kind == schema.UnknownAttribute) && e.given[p.Attribute] {
+				drop[p.Attribute] = s.whyNotAllowed(p.Attribute)
+			}
+		}
+		if len(drop) > 0 {
+			kept := e.Attributes[:0:0]
+			for _, a := range e.Attributes {
+				if why, ok := drop[a.Name]; ok {
+					e.dropped = append(e.dropped, dropped{name: a.Name, why: why})
+					continue
+				}
+				kept = append(kept, a)
+			}
+			e.Attributes = kept
+			err = e.Validate(s.schema)
+		}
+	}
+	e.invalid = err
 	return e
+}
+
+// whyNotAllowed says why an attribute was dropped, and which classes would
+// have carried it.
+func (s *server) whyNotAllowed(desc string) string {
+	t, _, ok := s.schema.Describe(desc)
+	if !ok {
+		return "the schema served here does not define it, or not with that option"
+	}
+	var would []string
+	for _, oc := range s.schema.ObjectClasses() {
+		for _, a := range append(oc.MustTypes(), oc.MayTypes()...) {
+			if t.IsA(a) {
+				would = append(would, oc.Name())
+				break
+			}
+		}
+	}
+	switch {
+	case len(would) == 0:
+		return "no class of the entry allows it, and no class of the schema does"
+	case len(would) > 4:
+		would = append(would[:4], "others")
+	}
+	return "no class of the entry allows it; " + list(would) + " would"
 }
 
 // posixMust is what posixAccount requires beyond cn and uid, which every
@@ -176,7 +251,9 @@ func (s *server) personEntry(id *directory.Identity) *entry {
 	if s.allows(classes, "cn") {
 		list = append(list, ldap.StringAttribute("cn", id.Name()))
 	}
+	e.given = map[string]bool{}
 	for name, values := range attrs.All() {
+		e.given[name] = true
 		list = append(list, ldap.StringAttribute(name, values...))
 	}
 	if ntValue != "" {
@@ -239,7 +316,9 @@ func (s *server) groupEntry(name string) (*entry, error) {
 		ldap.StringAttribute("objectClass", "top", class),
 		ldap.StringAttribute("cn", name),
 	}
+	e.given = map[string]bool{}
 	for n, values := range attrs.All() {
+		e.given[n] = true
 		list = append(list, ldap.StringAttribute(n, values...))
 	}
 	// ⛔ An empty group is published WITHOUT memberUid or member, not with an

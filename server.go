@@ -335,8 +335,14 @@ func (s *server) listen() error {
 		fmt.Fprintf(s.out, "%s is NOT published: it fails the schema: %s\n", e.DN, strings.Join(problems(e.invalid), "; "))
 	}
 	for _, e := range p.all {
-		if e.noSID != "" && e.invalid == nil {
+		if e.invalid != nil {
+			continue
+		}
+		if e.noSID != "" {
 			fmt.Fprintf(s.out, "%s is published without sambaNTPassword: %s\n", e.DN, e.noSID)
+		}
+		for _, d := range e.dropped {
+			fmt.Fprintf(s.out, "%s is published without %s: %s\n", e.DN, d.name, d.why)
 		}
 	}
 	return nil

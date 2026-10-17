@@ -77,11 +77,30 @@ user "keys" {
   authorized_keys = ["`+shapeKey+`"]
 }
 
-# Two of the trio: not a posixAccount -- and then uidNumber and gidNumber
-# belong to no class it has, so the entry fails the schema and is held back.
+# Two of the trio: not a posixAccount -- so uidNumber and gidNumber belong
+# to no class it has, and are DROPPED; the rest is published.
 user "partial" {
   password   = "x"
   attributes = { uidNumber = "1002", gidNumber = "1000" }
+}
+
+# mail on an account (no sn): dropped, the account published.
+user "mailacc" {
+  password   = "x"
+  attributes = { mail = "mailacc@example.org", description = "kept: account allows it" }
+}
+
+# A type the schema does not define: dropped too.
+user "colour" {
+  password   = "x"
+  attributes = { favouriteColour = "blue" }
+}
+
+# Two home directories: posixAccount allows homeDirectory, SINGLE-VALUE
+# forbids two. Nothing to drop -- the entry still fails, and is withheld.
+user "twohomes" {
+  password   = "x"
+  attributes = { uidNumber = "1003", gidNumber = "1000", homeDirectory = ["/home/a", "/home/b"] }
 }
 `)
 	got := entriesOf(t, r.srv)
@@ -134,20 +153,72 @@ user "partial" {
 		t.Errorf("acc lacks %v", m)
 	}
 
-	// The one that cannot be published.
-	p := got[dn("partial")]
-	if p == nil {
-		t.Fatal("partial: no entry built")
+	// The ones published without what no class of theirs allows.
+	for _, tc := range []struct {
+		name    string
+		classes []string
+		dropped []string
+		would   string
+		kept    string
+	}{
+		{"partial", []string{"top", "account", "uidObject"}, []string{"gidNumber", "uidNumber"}, "posixAccount", ""},
+		{"mailacc", []string{"top", "account", "uidObject"}, []string{"mail"}, "inetOrgPerson", "description"},
+		{"colour", []string{"top", "account", "uidObject"}, []string{"favouriteColour"}, "does not define it", ""},
+	} {
+		e := got[dn(tc.name)]
+		if e == nil {
+			t.Fatalf("%s: no entry built", tc.name)
+		}
+		if e.invalid != nil {
+			t.Errorf("%s is withheld, and dropping %v should have been enough: %v", tc.name, tc.dropped, e.invalid)
+		}
+		if err := e.Validate(r.srv.schema); err != nil {
+			t.Errorf("%s, published, fails Validate: %v", tc.name, err)
+		}
+		if c := values(e.Entry, "objectClass"); !slices.Equal(c, tc.classes) {
+			t.Errorf("%s: objectClass %v, want %v", tc.name, c, tc.classes)
+		}
+		var names []string
+		for _, d := range e.dropped {
+			names = append(names, d.name)
+			if !strings.Contains(d.why, tc.would) {
+				t.Errorf("%s: %s dropped because %q, want it to name %q", tc.name, d.name, d.why, tc.would)
+			}
+			if values(e.Entry, d.name) != nil {
+				t.Errorf("%s: %s was dropped and is still in the entry", tc.name, d.name)
+			}
+		}
+		slices.Sort(names)
+		if !slices.Equal(names, tc.dropped) {
+			t.Errorf("%s dropped %v, want %v", tc.name, names, tc.dropped)
+		}
+		if tc.kept != "" && values(e.Entry, tc.kept) == nil {
+			t.Errorf("%s: %s, which the entry allows, was dropped with the rest", tc.name, tc.kept)
+		}
+		if !slices.ContainsFunc(r.srv.publish().valid(), func(v *ldap.Entry) bool { return v.DN == e.DN }) {
+			t.Errorf("%s is not among the entries a search may return", tc.name)
+		}
 	}
+	if !slices.Equal(got[dn("partial")].missingPosix, []string{"homeDirectory"}) {
+		t.Errorf("partial lacks %v, want [homeDirectory]", got[dn("partial")].missingPosix)
+	}
+	// Nothing is dropped from an entry whose attributes all fit.
+	if d := got[dn("full")].dropped; d != nil {
+		t.Errorf("full dropped %v", d)
+	}
+
+	// The one that still cannot be published: dropping does not make an
+	// entry pass that fails for another reason.
+	two := got[dn("twohomes")]
 	var v *schema.ValidationError
-	if !errors.As(p.invalid, &v) || !v.Has(schema.NotAllowed) {
-		t.Fatalf("partial, with uidNumber and gidNumber outside any class it has, passed or failed for another reason: %v", p.invalid)
+	if !errors.As(two.invalid, &v) || !v.Has(schema.SingleValued) {
+		t.Fatalf("twohomes, with two values of a SINGLE-VALUE type, passed or failed for another reason: %v", two.invalid)
 	}
-	if !slices.Equal(p.missingPosix, []string{"homeDirectory"}) {
-		t.Errorf("partial lacks %v, want [homeDirectory]", p.missingPosix)
+	if two.dropped != nil {
+		t.Errorf("twohomes dropped %v: an allowed attribute is never dropped", two.dropped)
 	}
 	for _, e := range r.srv.publish().valid() {
-		if e.DN == dn("partial") {
+		if e.DN == dn("twohomes") {
 			t.Error("an entry that fails the schema is among those a search may return")
 		}
 	}
@@ -243,28 +314,46 @@ user "bob"   { password = "x" }
 	}
 }
 
-// A group attribute no class of its shape allows makes the group fail the
-// schema, and it is held back like a person.
-func TestAGroupThatFailsTheSchemaIsHeldBack(t *testing.T) {
+// A group attribute no class of its shape allows is dropped, and the group
+// published; one that still fails -- a gidNumber that is not an integer -- is
+// withheld.
+func TestAGroupAttributeNoClassAllowsIsDropped(t *testing.T) {
 	r := start(t, `
 listen  = "127.0.0.1:0"
 base_dn = "dc=example,dc=org"
 user "alice" { password = "x" }
 `)
-	mail, err := directory.NewAttributes(directory.Attribute{Name: "mail", Values: []string{"team@example.org"}})
+	mail, err := directory.NewAttributes(directory.Attribute{Name: "mail", Values: []string{"team@example.org"}},
+		directory.Attribute{Name: "description", Values: []string{"a team"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	badGID, err := directory.NewAttributes(directory.Attribute{Name: "gidNumber", Values: []string{"staff"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	r.srv.dir = directory.NewSet(&directory.Static{
-		Groups:     map[string][]string{"team": {"alice"}},
-		GroupAttrs: map[string]directory.Attributes{"team": mail},
+		Groups:     map[string][]string{"team": {"alice"}, "bad": {"alice"}},
+		GroupAttrs: map[string]directory.Attributes{"team": mail, "bad": badGID},
 	})
-	e := entriesOf(t, r.srv)["cn=team,ou=groups,dc=example,dc=org"]
-	if e == nil || e.invalid == nil {
-		t.Fatalf("a groupOfNames carrying mail passed the schema: %+v", e)
+	got := entriesOf(t, r.srv)
+	team := got["cn=team,ou=groups,dc=example,dc=org"]
+	if team == nil || team.invalid != nil {
+		t.Fatalf("team, a groupOfNames once mail is dropped, is withheld: %+v", team)
 	}
-	for _, v := range r.srv.publish().valid() {
-		if v.DN == e.DN {
+	if len(team.dropped) != 1 || team.dropped[0].name != "mail" || !strings.Contains(team.dropped[0].why, "inetOrgPerson") {
+		t.Errorf("team dropped %+v, want mail, naming a class that would carry it", team.dropped)
+	}
+	if values(team.Entry, "mail") != nil || values(team.Entry, "description") == nil {
+		t.Errorf("team: mail %v, description %v", values(team.Entry, "mail"), values(team.Entry, "description"))
+	}
+	bad := got["cn=bad,ou=groups,dc=example,dc=org"]
+	var v *schema.ValidationError
+	if bad == nil || !errors.As(bad.invalid, &v) || !v.Has(schema.InvalidValue) {
+		t.Fatalf("a posixGroup with gidNumber \"staff\" was not withheld for its value: %+v", bad)
+	}
+	for _, e := range r.srv.publish().valid() {
+		if e.DN == bad.DN {
 			t.Error("it is among the entries a search may return")
 		}
 	}
