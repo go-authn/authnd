@@ -58,6 +58,170 @@ Sources are asked in the order they are written and **the first that knows a
 name owns it**, so a service account written down here is not overridden by
 somebody with the same name in the database. Group membership is the union.
 
+## The entries it publishes
+
+Every entry is a standard-schema entry, and **every entry published passes
+`schema.Validate`** ([go-authn/ldap](https://github.com/go-authn/ldap)'s
+package `schema`) against the schema this server publishes at `cn=Subschema`.
+An entry that fails is **not published**: it is absent from every search, the
+startup log names it, and `authnd check` lists it with each problem `Validate`
+found. Up to v0.10.2 every person was `top, person, posixAccount` with none of
+the attributes those classes require.
+
+| a person with… | `objectClass` (every superclass listed, RFC 4512 §3.3) | `cn` |
+|---|---|---|
+| no `sn` | `top`, `account` (RFC 4524 §3.1) | only when another class allows it |
+| `sn` | `top`, `person`, `organizationalPerson`, `inetOrgPerson` (RFC 4519, RFC 2798) | yes |
+| … and `uidNumber`, `gidNumber`, `homeDirectory`, all three | `+ posixAccount` (RFC 2307) | yes |
+| … and SSH keys | `+ ldapPublicKey` (openssh-lpk), with `sshPublicKey` | |
+| … and a published NT hash with a sambaSID | `+ sambaSamAccount` (Samba), with `sambaSID` and `sambaNTPassword` | allowed |
+| … always | `+ uidObject` (RFC 4519 §3.14), so `(objectClass=uidObject)` finds everybody | |
+
+| a group with… | `objectClass` | members |
+|---|---|---|
+| a `gidNumber` | `top`, `posixGroup` (RFC 2307) | `memberUid`, names |
+| no `gidNumber`, somebody in it | `top`, `groupOfNames` (RFC 4519 §3.5) | `member`, the DNs this server publishes |
+| no `gidNumber`, nobody in it | `top`, `organizationalRole` (RFC 4519 §3.10) | none |
+| a `gidNumber`, nobody in it | `top`, `posixGroup` | none (no empty `memberUid`) |
+
+`uid` is the person's name, and so is `cn` wherever a class allows it. An
+`account` alone does not allow `cn` (its MAY is description, seeAlso, l, o,
+ou and host), so a person without `sn` and without the POSIX trio has `uid`
+and no `cn`. A person's and a group's descriptive attributes
+([go-authn/directory](https://github.com/go-authn/directory)'s
+`Identity.Attributes()` and `Set.GroupAttributes`) are published as given. When
+one does not belong to any class of the entry, the entry fails the schema and is
+held back. Examples: a `uidNumber` without `gidNumber` and `homeDirectory`, or a
+`mail` on an `account`.
+
+Why these choices:
+
+- **posixGroup follows RFC 2307, not draft-howard-rfc2307bis-02.** The draft
+  makes posixGroup AUXILIARY, and it expired without being published. The schema
+  served here is RFC 2307's, and an AUXILIARY posixGroup would need a structural
+  class beside it, `groupOfNames`, which needs a `member` that an empty group
+  cannot give.
+- **organizationalRole for an empty group without gidNumber.** `groupOfNames`
+  and `groupOfUniqueNames` both MUST have a member, and inventing one would be
+  false: `member: ""` names the root DSE, and the group's own DN makes it a
+  member of itself. `organizationalRole` is the one standard structural class
+  whose only MUST is `cn` and whose occupants (`roleOccupant`) are optional. It
+  takes `description`, `ou` and `seeAlso` as `groupOfNames` does.
+- **Auxiliary classes without DIT content rules.** RFC 4512 §2.4.3 forbids
+  auxiliary classes on an entry whose structural class has no DIT content rule.
+  Every directory server in use allows them anyway, and so does `Validate`
+  (go-authn/ldap says so).
+
+The schema is served: the root DSE carries `subschemaSubentry: cn=Subschema`,
+the library answers a base search of `cn=Subschema`, and filters are evaluated
+with the schema's matching rules, so `(uidNumber>=1000)` compares integers.
+
+```hcl
+user "dora" {
+  password_file   = "/etc/authnd/dora.pw"
+  authorized_keys = ["ssh-ed25519 AAAA… dora@laptop"]
+  attributes = {
+    sn            = "Explorer"          # inetOrgPerson
+    uidNumber     = "1000"              # the three: posixAccount
+    gidNumber     = "1000"
+    homeDirectory = "/home/dora"
+    mail          = "dora@example.org"
+  }
+}
+
+group "engineers" {
+  members    = ["dora", "eli"]
+  attributes = { gidNumber = "2000" }   # a posixGroup; without it, a groupOfNames
+}
+
+users "sql" {
+  driver   = "sqlite"
+  dsn_file = "/etc/authnd/dsn"
+  users    = "select login, secret, nt_hash, ssh_keys from staff"
+  groups   = "select team, member from teams"
+  users_attributes  = "select login, sn, uid as uidNumber, gid as gidNumber, home as homeDirectory, mail from person_attrs"
+  groups_attributes = "select team, gid as gidNumber, description from team_attrs"
+}
+```
+
+What that SQL source publishes, read by OpenLDAP's `ldapsearch` (from the pull
+request that introduced this):
+
+```
+dn: uid=dora,ou=people,dc=example,dc=org
+objectClass: top
+objectClass: person
+objectClass: organizationalPerson
+objectClass: inetOrgPerson
+objectClass: posixAccount
+objectClass: ldapPublicKey
+objectClass: uidObject
+uid: dora
+cn: dora
+sn: Explorer
+uidNumber: 1000
+gidNumber: 1000
+homeDirectory: /home/dora
+mail: dora@example.org
+sshPublicKey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH9Bl6dNhbHqUCLxLLjTe5MDLbLWyWZ9UBjFA+Vx4rJk dora@laptop
+
+dn: uid=gus,ou=people,dc=example,dc=org
+objectClass: top
+objectClass: account
+objectClass: uidObject
+uid: gus
+
+dn: cn=readers,ou=groups,dc=example,dc=org
+objectClass: top
+objectClass: groupOfNames
+cn: readers
+description: people who read
+member: uid=fay,ou=people,dc=example,dc=org
+member: uid=gus,ou=people,dc=example,dc=org
+```
+
+⛔ **A consumer that filters on `(objectClass=posixAccount)` no longer sees a
+person without the POSIX trio**, and one that filters on
+`(objectClass=posixGroup)` no longer sees a group without a `gidNumber`. This
+includes go-authn/directory's `ldapdir` up to v0.13.0, and so go-fileshare.
+Give people and groups those attributes, or point the consumer at
+`(objectClass=uidObject)`. ldapdir's default user filter is being widened to
+`(|(objectClass=posixAccount)(objectClass=account)(objectClass=uidObject))`.
+
+### `publish_nt_hash` needs a `samba` block
+
+`sambaNTPassword` is an attribute of Samba's `sambaSamAccount`, whose MUST is
+`uid` and `sambaSID`, and no other class allows it. So publishing it needs the
+domain a person's SID belongs to:
+
+```hcl
+publish_nt_hash = true
+samba {
+  domain_sid           = "S-1-5-21-1004336348-1177238915-682003330"   # `net getlocalsid` on the SMB server
+  algorithmic_rid_base = 1000                                         # optional; Samba's default
+}
+```
+
+A person's `sambaSID` is their own `sambaSID` attribute when a source gives
+one. Otherwise it is `domain_sid-RID`, with RID = 2 × `uidNumber` +
+`algorithmic_rid_base`. That is Samba's algorithmic mapping: smb.conf(5),
+*algorithmic rid base*, and `algorithmic_pdb_uid_to_user_rid` in
+`source3/passdb/passdb.c`. A person with an NT key and neither is published
+**without** `sambaNTPassword`, and `check` and the startup log say who. An odd
+base, or one below 1000, is refused: Samba would silently use another one.
+
+⛔ **`publish_nt_hash = true` without a `samba` block is refused at startup**,
+with a message saying what to add. v0.10.2 served that configuration, and so an
+upgrade that does not add the block stops. That is deliberate. The entry it
+published cannot pass the schema. The two quiet alternatives are dropping the
+attribute, which takes SMB away from everybody, and dropping the entry, which
+takes the person away. Both would happen with nothing on the console.
+
+`samba.schema` carries the three Samba definitions. They are written from
+Samba's published OIDs, names, syntaxes and matching rules, not copied from
+Samba's GPL-3.0 `samba.schema`, and `sambaSamAccount`'s MAY lists only what
+authnd publishes. See the file.
+
 ## What it refuses, and why
 
 An LDAP server is asked to prove people, so the refusals are the design.
@@ -379,22 +543,34 @@ moment it stops working for a bind.
 ## `check`, before you restart something people log in through
 
 ```
-$ authnd check /etc/authnd.d
+$ authnd check authnd.hcl
 ldap://127.0.0.1:3893, base dc=example,dc=org
 
-USER    FROM                    CAN PROVE   PUBLISHED AS
-backup  the configuration file  a password  uid, cn and sambaNTPassword
-dora    a sqlite database       a password  uid, cn and sambaNTPassword
-eli     a sqlite database       a password  uid, cn and sambaNTPassword
+USER  FROM               CAN PROVE             PUBLISHED AS                                                                         WITH
+dora  a sqlite database  a password and 1 key  person, organizationalPerson, inetOrgPerson, posixAccount, ldapPublicKey, uidObject  uid, cn, sn, uidNumber, gidNumber, homeDirectory, mail and sshPublicKey
+eli   a sqlite database  a password            account, posixAccount, uidObject                                                     uid, cn, uidNumber, gidNumber and homeDirectory
+fay   a sqlite database  a password            person, organizationalPerson, inetOrgPerson, uidObject                               uid, cn, sn and mail
+gus   a sqlite database  a password            account, uidObject                                                                   uid
+hal   a sqlite database  a password            NOT PUBLISHED (see below)                                                            uid and uidNumber
+ida   a sqlite database  a password            account, posixAccount, uidObject                                                     uid, cn, uidNumber, gidNumber and homeDirectory
 
-GROUP      MEMBERS
-engineers  dora and eli
-operators  backup
+GROUP       MEMBERS       PUBLISHED AS
+alumni      nobody        organizationalRole
+engineers   dora and eli  posixGroup
+nobody-yet  nobody        posixGroup
+readers     fay and gus   groupOfNames
+
+fay has no uidNumber, gidNumber or homeDirectory: not a posixAccount, published as person, organizationalPerson, inetOrgPerson, uidObject
+gus has no uidNumber, gidNumber or homeDirectory: not a posixAccount, published as account, uidObject
+hal has no gidNumber or homeDirectory: not a posixAccount, and as account, uidObject the entry fails the schema (below)
+group alumni has no gidNumber and nobody in it: not a posixGroup, published as an organizationalRole (a groupOfNames needs a member)
+group readers has no gidNumber: not a posixGroup, published as a groupOfNames (member DNs, no memberUid)
+hal is NOT published: as account, uidObject it fails the schema:
+  - uidNumber is not allowed by any of the entry's object classes
 
 a bind carries a password
 cn=reader,dc=example,dc=org may search; every other bound client may not
-sambaNTPassword is published on a loopback listener: it IS the credential, and
-whoever reads it authenticates as that person over NTLMv2
+sambaNTPassword is not published, so nothing here can authenticate an SMB session (NTLMv2 needs the password or its MD4, and a bind cannot answer it)
 
 this configuration can be served
 ```
@@ -403,6 +579,13 @@ It opens every source, the certificate and the keytab -- everything the server
 opens before it listens -- and prints what would be published, without
 listening, and never a secret, only where each one comes from. A port somebody
 else holds is the one failure it cannot see.
+
+`PUBLISHED AS` is each entry's object classes and `WITH` its attributes, read
+off the entries a search would return, built and validated the same way. After
+the tables come the people who lack posixAccount's attributes and which ones,
+the groups without a `gidNumber` and what they are published as instead, the
+people whose NT hash has no `sambaSID` to go with it, and every entry that is
+not published, with each problem `schema.Validate` named.
 
 ## The awkward half, said once
 

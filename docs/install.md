@@ -256,7 +256,21 @@ systemctl restart authnd
 ```
 
 `publish_nt_hash = true` requires TLS unless `listen` is loopback: an NT hash
-is the credential itself.
+is the credential itself. It also requires a `samba` block naming the domain
+SID, because `sambaNTPassword` belongs to Samba's `sambaSamAccount`, whose MUST
+includes `sambaSID`:
+
+```hcl
+publish_nt_hash = true
+samba {
+  domain_sid = "S-1-5-21-..."   # `net getlocalsid` on the SMB server
+}
+```
+
+Each person's `sambaSID` is their own `sambaSID` attribute, or the domain SID
+followed by 2 × `uidNumber` + 1000 (Samba's algorithmic mapping;
+`algorithmic_rid_base` changes the 1000). Without the block, authnd refuses to
+start and says what to add.
 
 ## 5. A Kerberos realm (optional)
 

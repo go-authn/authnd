@@ -141,7 +141,9 @@ func (s *server) personEntry(id *directory.Identity) *entry {
 	}
 	keys := id.Keys()
 	if len(keys) > 0 {
-		// openssh-lpk: AUXILIARY, MUST ( sshPublicKey $ uid ).
+		// openssh-lpk upstream (as go-authn/ldap embeds it): AUXILIARY,
+		// MAY ( sshPublicKey $ uid ), and the only class that allows
+		// sshPublicKey at all.
 		classes = append(classes, "ldapPublicKey")
 	}
 	var ntValue, sid string
