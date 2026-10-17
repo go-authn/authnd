@@ -170,6 +170,16 @@ func TestTheNTHashIsPublishedOnlyOnPurpose(t *testing.T) {
 	if !strings.Contains(out, "sambaNTPassword: "+hunter2NTHash) {
 		t.Errorf("the published hash is not the MD4 of dora's password:\n%s", out)
 	}
+	// In the class that allows it, with the SID that class requires: dora's
+	// uidNumber is 1000, so Samba's algorithmic RID is 2 x 1000 + 1000.
+	out, err = search(bin, r2.url(), reader, "let me read", people, "(uid=dora)", "objectClass", "sambaSID")
+	if err != nil {
+		t.Fatalf("ldapsearch: %v\n%s", err, out)
+	}
+	contains(t, out, "objectClass: sambaSamAccount", "sambaSID: "+testDomainSID+"-3000")
+	// And the Samba definitions are published with the rest.
+	out = readerSearch(t, bin, r2, "-b", "cn=Subschema", "-s", "base", "(objectClass=*)", "objectClasses", "attributeTypes")
+	contains(t, out, "NAME 'sambaSamAccount'", "NAME 'sambaSID'", "NAME 'sambaNTPassword'")
 }
 
 // A configuration that would put a credential on a network in the clear is

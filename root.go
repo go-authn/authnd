@@ -340,6 +340,8 @@ func report(cmd *cobra.Command, cfg *config) error {
 	if cfg.PublishNTHash {
 		fmt.Fprintf(out, "sambaNTPassword is published%s: it IS the credential, "+
 			"and whoever reads it authenticates as that person over NTLMv2\n", overWhat(cfg))
+		fmt.Fprintf(out, "  in sambaSamAccount, with sambaSIDs in %s (a person's own sambaSID, or RID 2 x uidNumber + %d)\n",
+			cfg.Samba.DomainSID, cfg.Samba.ridBase())
 	} else {
 		fmt.Fprintln(out, "sambaNTPassword is not published, so nothing here can authenticate an SMB session "+
 			"(NTLMv2 needs the password or its MD4, and a bind cannot answer it)")
@@ -395,6 +397,10 @@ func schemaReport(out io.Writer, pub publication) {
 	var lines []string
 	for _, e := range pub.all {
 		switch {
+		case e.invalid != nil && !e.group && len(e.missingPosix) > 0:
+			lines = append(lines, fmt.Sprintf("%s has %s: not a posixAccount, and as %s the entry fails the schema (below)",
+				e.name, describeMissing(e.missingPosix), strings.Join(e.shape, ", ")))
+			continue
 		case e.invalid != nil:
 			continue
 		case !e.group && len(e.missingPosix) > 0:
