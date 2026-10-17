@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"slices"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 
@@ -194,10 +195,24 @@ func report(cmd *cobra.Command, cfg *config) error {
 
 	fmt.Fprintf(out, "%s://%s, base %s\n\n", srv.scheme(), cfg.Listen, cfg.BaseDN)
 
+	// What each entry is published as comes from the entries themselves,
+	// built and validated exactly as a search builds them: a description of
+	// them written separately would be a second answer that can disagree.
+	pub := srv.publish()
+	people, groupOf := map[string]*entry{}, map[string]*entry{}
+	for _, e := range pub.all {
+		if e.group {
+			groupOf[e.name] = e
+		} else {
+			people[e.name] = e
+		}
+	}
+
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "USER\tFROM\tCAN PROVE\tPUBLISHED AS")
+	fmt.Fprintln(w, "USER\tFROM\tCAN PROVE\tPUBLISHED AS\tWITH")
 	for _, id := range srv.sorted() {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", id.Name(), id.Where(), proves(id), published(srv, id))
+		e := people[id.Name()]
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", id.Name(), id.Where(), proves(id), shapeOf(e), published(e))
 	}
 	if err := w.Flush(); err != nil {
 		return err
@@ -207,14 +222,22 @@ func report(cmd *cobra.Command, cfg *config) error {
 	if groups := srv.groupNames(); len(groups) > 0 {
 		fmt.Fprintln(out)
 		w = tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "GROUP\tMEMBERS")
+		fmt.Fprintln(w, "GROUP\tMEMBERS\tPUBLISHED AS")
 		for _, g := range groups {
 			members, err := srv.dir.Members(g)
 			if err != nil {
-				fmt.Fprintf(w, "%s\t%v\n", g, err)
+				fmt.Fprintf(w, "%s\t%v\t-\n", g, err)
 				continue
 			}
-			fmt.Fprintf(w, "%s\t%s\n", g, list(members))
+			shape := "NOT PUBLISHED: its attributes cannot be read"
+			if e := groupOf[g]; e != nil {
+				shape = shapeOf(e)
+			}
+			who := list(members)
+			if len(members) == 0 {
+				who = "nobody"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\n", g, who, shape)
 			for _, m := range members {
 				if _, known := srv.who()[m]; !known {
 					strangers[g] = append(strangers[g], m)
@@ -225,6 +248,7 @@ func report(cmd *cobra.Command, cfg *config) error {
 			return err
 		}
 	}
+	schemaReport(out, pub)
 	kerberosReport(out, cfg, srv.sorted())
 
 	// A group naming somebody no source here has an entry for. Published as
@@ -348,18 +372,63 @@ func proves(id *directory.Identity) string {
 	return list(have)
 }
 
-// published is the attributes this person's entry will carry.
-func published(s *server, id *directory.Identity) string {
-	attrs := []string{"uid", "cn"}
-	if s.cfg.PublishNTHash {
-		if _, err := id.NTKey(); err == nil {
-			attrs = append(attrs, "sambaNTPassword")
+// published is the attributes this person's entry carries, read off the entry
+// a search would return: every attribute but objectClass.
+func published(e *entry) string {
+	if e == nil {
+		return "-"
+	}
+	var attrs []string
+	for _, a := range e.Attributes {
+		if !strings.EqualFold(a.Name, "objectClass") {
+			attrs = append(attrs, a.Name)
 		}
 	}
-	if len(id.Keys()) > 0 {
-		attrs = append(attrs, "sshPublicKey")
-	}
 	return list(attrs)
+}
+
+// schemaReport says what the schema decided: who is published without
+// posixAccount and why, which groups are not posixGroups, whose NT hash has no
+// sambaSID to go with it, and every entry that is not published at all, with
+// each problem schema.Validate named.
+func schemaReport(out io.Writer, pub publication) {
+	var lines []string
+	for _, e := range pub.all {
+		switch {
+		case e.invalid != nil:
+			continue
+		case !e.group && len(e.missingPosix) > 0:
+			lines = append(lines, fmt.Sprintf("%s has %s: not a posixAccount, published as %s",
+				e.name, describeMissing(e.missingPosix), strings.Join(e.shape, ", ")))
+		case e.group && e.shape[0] == "groupOfNames":
+			lines = append(lines, fmt.Sprintf("group %s has no gidNumber: not a posixGroup, published as a groupOfNames (member DNs, no memberUid)", e.name))
+		case e.group && e.shape[0] == "organizationalRole":
+			lines = append(lines, fmt.Sprintf("group %s has no gidNumber and nobody in it: not a posixGroup, published as an organizationalRole "+
+				"(a groupOfNames needs a member)", e.name))
+		}
+		if e.noSID != "" {
+			lines = append(lines, fmt.Sprintf("%s is published without sambaNTPassword: %s", e.name, e.noSID))
+		}
+	}
+	if rejected := pub.rejected(); len(rejected) > 0 {
+		for _, e := range rejected {
+			what := e.name
+			if e.group {
+				what = "group " + e.name
+			}
+			lines = append(lines, fmt.Sprintf("%s is NOT published: as %s it fails the schema:", what, strings.Join(e.shape, ", ")))
+			for _, p := range problems(e.invalid) {
+				lines = append(lines, "  - "+p)
+			}
+		}
+	}
+	if len(lines) == 0 {
+		return
+	}
+	fmt.Fprintln(out)
+	for _, l := range lines {
+		fmt.Fprintln(out, l)
+	}
 }
 
 // overWhat says what protects the wire, since that is the whole condition

@@ -64,6 +64,8 @@ type config struct {
 	// through this directory -- and it is a CREDENTIAL, so it needs TLS or a
 	// listener that is not on the network.
 	PublishNTHash bool `hcl:"publish_nt_hash,optional"`
+	// Samba is the domain publish_nt_hash needs: see sambaBlock.
+	Samba *sambaBlock `hcl:"samba,block"`
 
 	// Kerberos, when present, makes this a KDC as well as a directory: the
 	// same people, issued tickets instead of only being looked up.
@@ -127,26 +129,50 @@ type readerBlock struct {
 }
 
 // A userBlock is somebody written down here rather than in a directory: a
-// service account, or a small site's whole list.
-type userBlock struct {
-	Name         string `hcl:"name,label"`
-	Password     string `hcl:"password,optional"`
-	PasswordFile string `hcl:"password_file,optional"`
-	// NTHash is MD4(UTF16LE(password)), in the 32 hex characters a directory
-	// publishes it as -- for a site that holds THAT and not the password.
-	NTHash string `hcl:"nt_hash,optional"`
-	// TOTPSecret is the base32 secret behind this person's one-time codes.
-	// ⛔ It IS the second factor: whoever holds it produces every future code.
-	TOTPSecret string `hcl:"totp_secret,optional"`
-	// AuthorizedKeys are published as sshPublicKey, for whatever reads them.
-	AuthorizedKeys     []string `hcl:"authorized_keys,optional"`
-	AuthorizedKeysFile string   `hcl:"authorized_keys_file,optional"`
-}
+// service account, or a small site's whole list. It is go-authn/directory's
+// hcldir.UserBlock -- the block go-fileshare reads too -- so it carries an
+// `attributes = { ... }` map:
+//
+//	user "alice" {
+//	  password_file = "/etc/authnd/alice.pw"
+//	  attributes = {
+//	    sn            = "Liddell"
+//	    uidNumber     = "1000"
+//	    gidNumber     = "1000"
+//	    homeDirectory = "/home/alice"
+//	  }
+//	}
+//
+// ⛔ It was authnd's own struct with the same fields and no attributes, which
+// is the drift hcldir was written to end: a uidNumber could come from a
+// database and not from this file.
+type userBlock = hcldir.UserBlock
 
-// A groupBlock names people, and is published as a posixGroup.
-type groupBlock struct {
-	Name    string   `hcl:"name,label"`
-	Members []string `hcl:"members"`
+// A groupBlock names people. It is published as a posixGroup when its
+// attributes give a gidNumber, which RFC 2307 makes MUST, and as a
+// groupOfNames otherwise: see entries.go.
+type groupBlock = hcldir.GroupBlock
+
+// A sambaBlock says which domain the people's sambaSID belongs to, which
+// publish_nt_hash needs: sambaNTPassword is an attribute of Samba's
+// sambaSamAccount, and sambaSamAccount has MUST ( uid $ sambaSID ).
+//
+//	samba {
+//	  domain_sid           = "S-1-5-21-1004336348-1177238915-682003330"
+//	  algorithmic_rid_base = 1000   # Samba's default; optional
+//	}
+//
+// A person's sambaSID is their own sambaSID attribute when a source gives one,
+// and otherwise domain_sid-RID with RID = 2 x uidNumber + algorithmic_rid_base:
+// Samba's algorithmic mapping (smb.conf(5), "algorithmic rid base";
+// algorithmic_pdb_uid_to_user_rid in source3/passdb/passdb.c, with
+// RID_MULTIPLIER 2 and USER_RID_TYPE 0 from source3/include/passdb.h).
+type sambaBlock struct {
+	DomainSID string `hcl:"domain_sid"`
+	// RIDBase is Samba's "algorithmic rid base". 0 means 1000, Samba's
+	// default; anything else must be what the SMB server is configured with,
+	// or the SIDs published here are not the ones it computes.
+	RIDBase int `hcl:"algorithmic_rid_base,optional"`
 }
 
 // loadConfig reads the files and checks what can be checked without opening
@@ -237,6 +263,9 @@ func (c *config) check() error {
 	if c.PublishNTHash && !c.tls() && !loopback(c.Listen) {
 		return fmt.Errorf("publish_nt_hash needs cert_file and key_file: an NT hash IS the credential, "+
 			"and %s is not loopback, so it would cross a network in the clear", c.Listen)
+	}
+	if err := c.checkSamba(); err != nil {
+		return err
 	}
 
 	seen := map[string]bool{}

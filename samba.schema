@@ -1,0 +1,41 @@
+# Samba's sambaSamAccount, and the two attribute types authnd publishes in it.
+#
+# Written for authnd, NOT copied. Samba's own schema file
+# (examples/LDAP/samba.schema in the Samba sources) carries no licence of its
+# own and is part of Samba, which is GPL-3.0-or-later; authnd is BSD-3-Clause.
+# So these definitions were written here from what Samba PUBLISHES about them:
+# the OIDs under Samba's enterprise arc 1.3.6.1.4.1.7165 (2.1.x attribute
+# types, 2.2.x object classes, as that file's header assigns them), and the
+# names, matching rules, syntaxes and SINGLE-VALUE flags an interoperating
+# directory has to reproduce exactly -- a client compares sambaSID with the
+# rule the server says, and a different one would be a different attribute
+# under the same OID. The DESC strings are authnd's own words.
+#
+# ONE deliberate difference: sambaSamAccount's MAY lists only what authnd can
+# publish (cn, sambaNTPassword, displayName, description). Samba's lists
+# twenty more, mostly attribute types authnd does not define. An entry valid
+# under this definition is valid under Samba's: the MUST is the same and the
+# MAY is a subset.
+
+# Samba: 1.3.6.1.4.1.7165.2.1.20, a SID in its string form (S-1-5-21-...).
+attributetype ( 1.3.6.1.4.1.7165.2.1.20 NAME 'sambaSID'
+	DESC 'a security identifier, in its S-1-... string form'
+	EQUALITY caseIgnoreIA5Match
+	SUBSTR caseExactIA5SubstringsMatch
+	SYNTAX 1.3.6.1.4.1.1466.115.121.1.26{64}
+	SINGLE-VALUE )
+
+# Samba: 1.3.6.1.4.1.7165.2.1.25, MD4(UTF-16LE(password)) in 32 hex digits.
+attributetype ( 1.3.6.1.4.1.7165.2.1.25 NAME 'sambaNTPassword'
+	DESC 'the NT hash: MD4 of the UTF-16LE password, 32 hex digits'
+	EQUALITY caseIgnoreIA5Match
+	SYNTAX 1.3.6.1.4.1.1466.115.121.1.26{32}
+	SINGLE-VALUE )
+
+# Samba: 1.3.6.1.4.1.7165.2.2.6. MUST ( uid $ sambaSID ) as Samba has it.
+objectclass ( 1.3.6.1.4.1.7165.2.2.6 NAME 'sambaSamAccount'
+	DESC 'an account an SMB server authenticates'
+	SUP top
+	AUXILIARY
+	MUST ( uid $ sambaSID )
+	MAY ( cn $ sambaNTPassword $ displayName $ description ) )

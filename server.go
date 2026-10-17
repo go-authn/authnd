@@ -8,7 +8,6 @@ import (
 
 	"context"
 	"crypto/tls"
-	"encoding/hex"
 	"fmt"
 	"github.com/go-authn/kdc"
 	"io"
@@ -25,6 +24,7 @@ import (
 	"github.com/go-authn/totp"
 
 	ldap "github.com/go-authn/ldap"
+	"github.com/go-authn/ldap/schema"
 )
 
 // A server answers LDAP from the sources a configuration named.
@@ -56,6 +56,11 @@ type server struct {
 	readerSecrets map[string][]byte
 
 	peopleDN, groupsDN string
+
+	// schema is what this server publishes at cn=Subschema and holds every
+	// entry it publishes to: go-authn/ldap's standard schema, with Samba's
+	// sambaSamAccount when the samba block is there.
+	schema *schema.Schema
 
 	// policy is what a bind must satisfy, and codes remembers which one-time
 	// codes have been used -- a code is valid for a whole step, so a server
@@ -91,6 +96,11 @@ func open(cfg *config, out io.Writer) (*server, error) {
 		peopleDN:      "ou=people," + cfg.BaseDN,
 		groupsDN:      "ou=groups," + cfg.BaseDN,
 	}
+	sch, err := directorySchema(cfg)
+	if err != nil {
+		return nil, err
+	}
+	s.schema = sch
 	if m := cfg.MFA; m != nil {
 		s.policy = mfa.Policy{Count: m.Factors, DistinctKinds: m.DistinctKinds}
 		if s.policy.Count == 0 {
@@ -167,43 +177,20 @@ func open(cfg *config, out io.Writer) (*server, error) {
 }
 
 // localSource is the user and group blocks: a small site's whole list, or the
-// service accounts a big one keeps out of its directory.
+// service accounts a big one keeps out of its directory. It is
+// go-authn/directory's hcldir.File, the same reading go-fileshare does, so a
+// block's `attributes` come with it.
 func localSource(cfg *config) (*directory.Static, error) {
-	static := &directory.Static{Name: "the configuration file", Groups: map[string][]string{}}
-	for _, g := range cfg.Groups {
-		static.Groups[g.Name] = g.Members
+	src, err := hcldir.File(cfg.Users, cfg.Groups)
+	if err != nil {
+		return nil, err
 	}
-	for _, u := range cfg.Users {
-		opts := []directory.Option{directory.From("the configuration file")}
-		pw, err := secret(u.Password, u.PasswordFile, "user "+u.Name)
-		if err != nil {
-			return nil, err
-		}
-		if pw != "" {
-			opts = append(opts, directory.WithPassword(pw))
-		}
-		if u.NTHash != "" {
-			hash, err := directory.ParseNTHash(u.NTHash)
-			if err != nil {
-				return nil, fmt.Errorf("user %q: %w", u.Name, err)
-			}
-			opts = append(opts, directory.WithNTHash(hash))
-		}
-		if u.TOTPSecret != "" {
-			secret, err := directory.ParseTOTPSecret(u.TOTPSecret)
-			if err != nil {
-				return nil, fmt.Errorf("user %q: %w", u.Name, err)
-			}
-			opts = append(opts, directory.WithTOTPSecret(secret))
-		}
-		keys, err := authorizedKeys(u)
-		if err != nil {
-			return nil, err
-		}
-		if len(keys) > 0 {
-			opts = append(opts, directory.WithPublicKeys(keys...))
-		}
-		static.People = append(static.People, directory.NewIdentity(u.Name, opts...))
+	static, ok := src.(*directory.Static)
+	if !ok {
+		// hcldir documents File as a Static held in memory; a later
+		// version that changed that would break the password write, which
+		// swaps this source whole, so it is refused here rather than there.
+		return nil, fmt.Errorf("hcldir.File returned %T, not a *directory.Static", src)
 	}
 	return static, nil
 }
@@ -280,6 +267,10 @@ func (s *server) listen() error {
 		NamingContexts: []string{s.cfg.BaseDN},
 		Vendor:         "go-authn/authnd",
 		VendorVersion:  version(),
+		// The schema every entry is held to, published: the root DSE names
+		// cn=Subschema in subschemaSubentry, the library answers a base
+		// search of it, and filters are evaluated with its matching rules.
+		Schema: s.schema,
 	}
 	if s.oidc != nil {
 		srv.SASL = s
@@ -335,6 +326,18 @@ func (s *server) listen() error {
 		s.scheme(), ln.Addr(), len(s.who()), plural(len(s.who()), "person", "people"), s.dir.Describe())
 	if r != nil {
 		fmt.Fprintf(s.out, "realm %s on %s (udp and tcp)\n", r.cfg.Realm, r.cfg.Listen)
+	}
+	// What is held back is said at startup as well as by `check`: an entry
+	// that fails the schema is not published, and a journal is where
+	// somebody looks when a person is missing from a search.
+	p := s.publish()
+	for _, e := range p.rejected() {
+		fmt.Fprintf(s.out, "%s is NOT published: it fails the schema: %s\n", e.DN, strings.Join(problems(e.invalid), "; "))
+	}
+	for _, e := range p.all {
+		if e.noSID != "" && e.invalid == nil {
+			fmt.Fprintf(s.out, "%s is published without sambaNTPassword: %s\n", e.DN, e.noSID)
+		}
 	}
 	return nil
 }
@@ -582,11 +585,20 @@ func (s *server) Search(ctx context.Context, sess ldap.Session, req *ldap.Search
 	// The filter and the attribute selection are the library's too: this
 	// server publishes entries and does not decide which of them a question
 	// was about.
-	for _, e := range append(s.peopleEntries(), s.groupEntries()...) {
+	//
+	// ⛔ req.Matches, not req.Filter.Matches: it evaluates with the schema's
+	// matching rules, so (uidNumber>=1000) compares integers ("10000" is
+	// not less than "9999") and uid compares case-insensitively while
+	// sshPublicKey does not. The library re-checks every entry sent and drops
+	// what the filter does not make TRUE, but it cannot bring back one left
+	// out here, and Filter.Matches compares strings.
+	//
+	// Only entries that pass the schema are here: see entries.go.
+	for _, e := range s.publish().valid() {
 		if err := ctx.Err(); err != nil {
 			return ldap.Result{}, err
 		}
-		if !ldap.InScope(e.DN, req.BaseObject, req.Scope) || !req.Filter.Matches(e) {
+		if !ldap.InScope(e.DN, req.BaseObject, req.Scope) || !req.Matches(e) {
 			continue
 		}
 		if err := w.Entry(e); err != nil {
@@ -594,58 +606,6 @@ func (s *server) Search(ctx context.Context, sess ldap.Session, req *ldap.Search
 		}
 	}
 	return ldap.Result{Code: ldap.Success}, nil
-}
-
-// peopleEntries is everybody, as posixAccount entries.
-func (s *server) peopleEntries() []*ldap.Entry {
-	var out []*ldap.Entry
-	for _, id := range s.sorted() {
-		attrs := []*ldap.Attribute{
-			ldap.StringAttribute("objectClass", "top", "person", "posixAccount"),
-			ldap.StringAttribute("uid", id.Name()),
-			ldap.StringAttribute("cn", id.Name()),
-		}
-		// ⛔ Published only when asked for, because it IS the credential:
-		// whoever holds MD4(UTF16LE(password)) authenticates as that person
-		// over NTLMv2 without ever learning the password. The configuration
-		// refuses to turn this on where it would cross a network in the clear.
-		if s.cfg.PublishNTHash {
-			if key, err := id.NTKey(); err == nil {
-				attrs = append(attrs, ldap.StringAttribute("sambaNTPassword",
-					strings.ToUpper(hex.EncodeToString(key))))
-			}
-		}
-		if keys := id.Keys(); len(keys) > 0 {
-			attrs = append(attrs, ldap.StringAttribute("sshPublicKey", keys...))
-		}
-		out = append(out, &ldap.Entry{DN: s.dnOf(id.Name()), Attributes: attrs})
-	}
-	return out
-}
-
-// groupEntries is every group any source knows, as posixGroup entries.
-func (s *server) groupEntries() []*ldap.Entry {
-	var out []*ldap.Entry
-	for _, name := range s.groupNames() {
-		members, err := s.dir.Members(name)
-		if err != nil {
-			continue
-		}
-		attrs := []*ldap.Attribute{
-			ldap.StringAttribute("objectClass", "top", "posixGroup"),
-			ldap.StringAttribute("cn", name),
-		}
-		// ⛔ An empty group is published WITHOUT memberUid, not with an empty
-		// one: an attribute of an entry has at least one value (RFC 4511
-		// 4.1.7), and memberUid is MAY in posixGroup (RFC 2307). Before
-		// go-authn/directory v0.12.0 such a group was "no such group" and
-		// left out altogether, although a source listed it.
-		if len(members) > 0 {
-			attrs = append(attrs, ldap.StringAttribute("memberUid", members...))
-		}
-		out = append(out, &ldap.Entry{DN: "cn=" + name + "," + s.groupsDN, Attributes: attrs})
-	}
-	return out
 }
 
 // dnOf is where somebody's entry is.
