@@ -92,6 +92,13 @@ func TestARangeFilterComparesIntegers(t *testing.T) {
 	if strings.Contains(out, "uid: ann") {
 		t.Errorf("999 >= 1000 was true: the comparison is of strings\n%s", out)
 	}
+	// ⛔ The other direction is the one only the HANDLER can get wrong. The
+	// library drops an entry the handler sent that the schema does not
+	// match, so 999 above is caught either way; it cannot bring back one the
+	// handler left out. As strings, "10000" < "9999", and a handler using
+	// req.Filter.Matches never sends cat.
+	out = readerSearch(t, bin, r, "-b", "ou=people,dc=example,dc=org", "(uidNumber>=9999)", "uid")
+	contains(t, out, "uid: cat", "numEntries: 1")
 }
 
 // The invariant, seen from a client: an entry that fails the schema is not in
