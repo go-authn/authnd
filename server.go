@@ -323,7 +323,7 @@ func (s *server) listen() error {
 		s.realm = r
 	}
 	fmt.Fprintf(s.out, "%s on %s, serving %d %s from %s\n",
-		s.scheme(), ln.Addr(), len(s.who()), plural(len(s.who()), "person", "people"), s.dir.Describe())
+		s.scheme(), ln.Addr(), len(s.who()), plural(len(s.who()), "person", "people"), s.servedFrom())
 	if r != nil {
 		fmt.Fprintf(s.out, "realm %s on %s (udp and tcp)\n", r.cfg.Realm, r.cfg.Listen)
 	}
