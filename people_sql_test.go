@@ -17,11 +17,19 @@ import (
 // arrived; a build that leaves out the database should not leave out the tests.
 func peopleConfig(t *testing.T, dir string, extra string) string {
 	t.Helper()
+	// dora has what a posixAccount needs and eli has nothing beyond a
+	// password, so the two standard shapes are both here: dora is an
+	// account with posixAccount, eli an account without it. engineers has a
+	// gidNumber, so it is a posixGroup with memberUid.
 	dsn := sqliteWith(t, dir, `
 create table staff (login text primary key, secret text, nt_hash text);
 insert into staff values ('dora', 'hunter2', null), ('eli', 'swordfish', null);
+create table posix (login text primary key, uid integer, gid integer, home text);
+insert into posix values ('dora', 1000, 1000, '/home/dora');
 create table teams (team text, member text);
 insert into teams values ('engineers', 'dora'), ('engineers', 'eli');
+create table team_ids (team text primary key, gid integer);
+insert into team_ids values ('engineers', 2000);
 `)
 	return fmt.Sprintf(`
 listen  = "127.0.0.1:0"
@@ -36,6 +44,8 @@ users "sql" {
   dsn_file = %q
   users    = "select login, secret from staff"
   groups   = "select team, member from teams"
+  users_attributes  = "select login, cast(uid as text) as uidNumber, cast(gid as text) as gidNumber, home as homeDirectory from posix"
+  groups_attributes = "select team, cast(gid as text) as gidNumber from team_ids"
 }
 %s`, hclPath(dsn), extra)
 }

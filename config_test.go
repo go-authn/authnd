@@ -153,6 +153,7 @@ func TestAnNTHashMayBePublishedOverTLS(t *testing.T) {
 base_dn         = "dc=example,dc=org"
 listen          = "0.0.0.0:3893"
 publish_nt_hash = true
+samba { domain_sid = "S-1-5-21-1004336348-1177238915-682003330" }
 cert_file       = %q
 key_file        = %q
 user "svc" { password = "x" }

@@ -91,3 +91,20 @@ func (l *liveSource) Identities() ([]*directory.Identity, error) { return l.p.Lo
 func (l *liveSource) Members(group string) ([]string, error) { return l.p.Load().Members(group) }
 
 func (l *liveSource) GroupNames() ([]string, error) { return l.p.Load().GroupNames() }
+
+// GroupAttributes makes the configuration file's group attributes reach the
+// set: without it the set takes this source for one that cannot describe its
+// groups, and a group block's gidNumber never arrives -- the group is then
+// published as a groupOfNames although the file made it a posixGroup.
+func (l *liveSource) GroupAttributes(group string) (directory.Attributes, error) {
+	return l.p.Load().GroupAttributes(group)
+}
+
+// The interfaces the set asks of a source, checked here rather than found
+// missing at run time: a method left off is a silent difference, as
+// GroupAttributes was.
+var (
+	_ directory.Source          = (*liveSource)(nil)
+	_ directory.GroupLister     = (*liveSource)(nil)
+	_ directory.GroupAttributer = (*liveSource)(nil)
+)

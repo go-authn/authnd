@@ -19,7 +19,7 @@ func TestOpenLDAPReadsPeopleOutOfADatabase(t *testing.T) {
 	r := start(t, peopleConfig(t, dir, ""))
 
 	out, err := search(bin, r.url(), "cn=reader,dc=example,dc=org", "let me read",
-		"ou=people,dc=example,dc=org", "(objectClass=posixAccount)", "uid")
+		"ou=people,dc=example,dc=org", "(objectClass=uidObject)", "uid")
 	if err != nil {
 		t.Fatalf("ldapsearch: %v\n%s", err, out)
 	}
@@ -108,7 +108,7 @@ func TestTheUnauthenticatedBindIsRefused(t *testing.T) {
 	people := "ou=people,dc=example,dc=org"
 
 	for _, who := range []string{"uid=dora," + people, "cn=reader,dc=example,dc=org"} {
-		out, err := search(bin, r.url(), who, "", people, "(objectClass=posixAccount)", "uid")
+		out, err := search(bin, r.url(), who, "", people, "(objectClass=uidObject)", "uid")
 		if err == nil {
 			t.Errorf("%s was let in with an empty password:\n%s", who, out)
 		}
@@ -118,7 +118,7 @@ func TestTheUnauthenticatedBindIsRefused(t *testing.T) {
 	}
 	// Anonymous, with no bind DN at all, reaches the search and is refused
 	// there -- a different refusal, and the right one.
-	out, _ := search(bin, r.url(), "", "", people, "(objectClass=posixAccount)", "uid")
+	out, _ := search(bin, r.url(), "", "", people, "(objectClass=uidObject)", "uid")
 	if strings.Contains(out, "uid: dora") {
 		t.Errorf("an anonymous client read the people:\n%s", out)
 	}
@@ -132,10 +132,10 @@ func TestOnlyAReaderMaySearch(t *testing.T) {
 	r := start(t, peopleConfig(t, dir, ""))
 	people := "ou=people,dc=example,dc=org"
 
-	if out, err := search(bin, r.url(), "cn=reader,dc=example,dc=org", "let me read", people, "(objectClass=posixAccount)", "uid"); err != nil {
+	if out, err := search(bin, r.url(), "cn=reader,dc=example,dc=org", "let me read", people, "(objectClass=uidObject)", "uid"); err != nil {
 		t.Errorf("the reader could not search: %v\n%s", err, out)
 	}
-	if out, err := search(bin, r.url(), "uid=svc,"+people, "service", people, "(objectClass=posixAccount)", "uid"); err == nil {
+	if out, err := search(bin, r.url(), "uid=svc,"+people, "service", people, "(objectClass=uidObject)", "uid"); err == nil {
 		t.Errorf("svc bound and read everybody:\n%s", out)
 	}
 }
@@ -162,7 +162,7 @@ func TestTheNTHashIsPublishedOnlyOnPurpose(t *testing.T) {
 	// On, on a loopback listener: the hash is there, and it is the MD4 of the
 	// password the database holds -- which is the whole reason SMB can use it.
 	dir2 := t.TempDir()
-	r2 := start(t, peopleConfig(t, dir2, "\npublish_nt_hash = true\n"))
+	r2 := start(t, peopleConfig(t, dir2, "\npublish_nt_hash = true\n"+sambaConfig))
 	out, err = search(bin, r2.url(), reader, "let me read", people, "(uid=dora)", "uid", "sambaNTPassword")
 	if err != nil {
 		t.Fatalf("ldapsearch: %v\n%s", err, out)
@@ -170,6 +170,16 @@ func TestTheNTHashIsPublishedOnlyOnPurpose(t *testing.T) {
 	if !strings.Contains(out, "sambaNTPassword: "+hunter2NTHash) {
 		t.Errorf("the published hash is not the MD4 of dora's password:\n%s", out)
 	}
+	// In the class that allows it, with the SID that class requires: dora's
+	// uidNumber is 1000, so Samba's algorithmic RID is 2 x 1000 + 1000.
+	out, err = search(bin, r2.url(), reader, "let me read", people, "(uid=dora)", "objectClass", "sambaSID")
+	if err != nil {
+		t.Fatalf("ldapsearch: %v\n%s", err, out)
+	}
+	contains(t, out, "objectClass: sambaSamAccount", "sambaSID: "+testDomainSID+"-3000")
+	// And the Samba definitions are published with the rest.
+	out = readerSearch(t, bin, r2, "-b", "cn=Subschema", "-s", "base", "(objectClass=*)", "objectClasses", "attributeTypes")
+	contains(t, out, "NAME 'sambaSamAccount'", "NAME 'sambaSID'", "NAME 'sambaNTPassword'")
 }
 
 // A configuration that would put a credential on a network in the clear is
@@ -326,3 +336,10 @@ func TestTheCommandRefusesWhatItCannotRead(t *testing.T) {
 		t.Error("serve accepted a file that is not there")
 	}
 }
+
+// testDomainSID is the domain the tests' sambaSIDs belong to, and sambaConfig
+// is the block publish_nt_hash needs beside it.
+const (
+	testDomainSID = "S-1-5-21-1004336348-1177238915-682003330"
+	sambaConfig   = "\nsamba { domain_sid = \"" + testDomainSID + "\" }\n"
+)

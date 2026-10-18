@@ -22,10 +22,16 @@ base_dn = "dc=example,dc=org"
 reader "cn=reader,dc=example,dc=org" { password = "let me read" }
 
 user "svc"  { password = "service" }
-user "dora" { password = "hunter2" }
+user "dora" {
+  password   = "hunter2"
+  attributes = { uidNumber = "1000", gidNumber = "1000", homeDirectory = "/home/dora" }
+}
 user "eli"  { password = "swordfish" }
 
-group "engineers" { members = ["dora", "eli"] }
+group "engineers" {
+  members    = ["dora", "eli"]
+  attributes = { gidNumber = "2000" }
+}
 %s`, extra)
 }
 

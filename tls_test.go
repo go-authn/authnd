@@ -41,6 +41,7 @@ func TestOpenLDAPOverTLS(t *testing.T) {
 	cert, key := selfSigned(t, dir)
 	body := peopleConfig(t, dir, fmt.Sprintf(`
 publish_nt_hash = true
+samba { domain_sid = "S-1-5-21-1004336348-1177238915-682003330" }
 cert_file = %q
 key_file  = %q
 `, hclPath(cert), hclPath(key)))
@@ -79,7 +80,7 @@ func TestTLSDoesNotChangeWhoMaySearch(t *testing.T) {
 
 	run := func(dn, password string) (string, error) {
 		cmd := exec.Command(bin, "-x", "-H", "ldaps://"+r.addr, "-D", dn, "-w", password,
-			"-b", "ou=people,dc=example,dc=org", "(objectClass=posixAccount)", "uid")
+			"-b", "ou=people,dc=example,dc=org", "(objectClass=uidObject)", "uid")
 		cmd.Env = append(os.Environ(), "LDAPTLS_REQCERT=allow")
 		out, err := cmd.CombinedOutput()
 		return string(out), err

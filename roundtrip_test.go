@@ -31,12 +31,15 @@ create table staff (login text primary key, secret text, nt_hash text);
 insert into staff values ('dora', 'hunter2', null), ('frank', null, '%s');
 create table teams (team text, member text);
 insert into teams values ('engineers', 'dora'), ('engineers', 'frank');
+create table posix (login text primary key, uid text, gid text, home text);
+insert into posix values ('dora', '1000', '1000', '/home/dora'), ('frank', '1001', '1000', '/home/frank');
 `, strings.ToLower(hunter2NTHash)))
 	body := fmt.Sprintf(`
 listen  = "127.0.0.1:0"
 base_dn = "dc=example,dc=org"
 
 publish_nt_hash = true
+samba { domain_sid = "S-1-5-21-1004336348-1177238915-682003330" }
 
 reader "cn=reader,dc=example,dc=org" { password = "let me read" }
 
@@ -45,6 +48,14 @@ users "sql" {
   dsn_file = %q
   users    = "select login, secret, nt_hash from staff"
   groups   = "select team, member from teams"
+  # The POSIX trio makes them posixAccounts, which the released ldapdir's
+  # default filter, (objectClass=posixAccount), asks for; uidNumber is also
+  # what their sambaSID is derived from.
+  users_attributes = "select login, uid as uidNumber, gid as gidNumber, home as homeDirectory from posix"
+  # And engineers is a posixGroup, which is what the released ldapdir's
+  # default group filter, (objectClass=posixGroup), asks for: a group
+  # without a gidNumber is a groupOfNames, which that filter does not see.
+  groups_attributes = "select 'engineers', '1000' as gidNumber"
 }
 `, hclPath(dsn))
 	r := start(t, body)

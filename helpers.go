@@ -4,12 +4,10 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 
 	"github.com/go-authn/directory"
-	"golang.org/x/crypto/ssh"
 )
 
 // sorted is everybody, in a stable order: a listing that reshuffles itself
@@ -44,34 +42,6 @@ func (s *server) groupNames() []string {
 	}
 	slices.Sort(names)
 	return slices.Compact(names)
-}
-
-// authorizedKeys is a user block's keys, parsed to REFUSE one that does not
-// parse: silently ignoring a bad line is how a server ends up denying the
-// person it was configured for, with nothing to say why.
-func authorizedKeys(u userBlock) ([]string, error) {
-	text := strings.Join(u.AuthorizedKeys, "\n")
-	if u.AuthorizedKeysFile != "" {
-		b, err := os.ReadFile(u.AuthorizedKeysFile)
-		if err != nil {
-			return nil, fmt.Errorf("user %q: %w", u.Name, err)
-		}
-		text = string(b)
-	}
-	if strings.TrimSpace(text) == "" {
-		return nil, nil
-	}
-	var lines []string
-	for _, line := range strings.Split(text, "\n") {
-		if line = strings.TrimSpace(line); line == "" {
-			continue
-		}
-		if _, _, _, _, err := ssh.ParseAuthorizedKey([]byte(line)); err != nil {
-			return nil, fmt.Errorf("user %q: %q is not an authorized_keys line: %w", u.Name, line, err)
-		}
-		lines = append(lines, line)
-	}
-	return lines, nil
 }
 
 // plural picks the word, so a message can say "1 person" without reading like

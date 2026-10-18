@@ -24,15 +24,22 @@ cert_file = %q
 key_file  = %q
 
 publish_nt_hash = true
+samba { domain_sid = "S-1-5-21-1004336348-1177238915-682003330" }
 
 reader "cn=reader,dc=example,dc=org" { password = "let me read" }
 
 # A password: everything can be derived from it, including the NT hash.
-user "dora" { password = "hunter2" }
+user "dora" {
+  password   = "hunter2"
+  attributes = { uidNumber = "1000" }
+}
 
 # ONLY an NT hash, as a site that stores what Samba stores does. She can be
 # served over SMB and cannot be bound as with a password.
-user "frank" { nt_hash = %q }
+user "frank" {
+  nt_hash    = %q
+  attributes = { uidNumber = "1001" }
+}
 
 # Keys and a code, and no password at all.
 user "gwen" {
@@ -85,9 +92,13 @@ listen  = "127.0.0.1:0"
 base_dn = "dc=example,dc=org"
 
 publish_nt_hash = true
+samba { domain_sid = "S-1-5-21-1004336348-1177238915-682003330" }
 
 reader "cn=reader,dc=example,dc=org" { password = "let me read" }
-user "dora" { password = "hunter2" }
+user "dora" {
+  password   = "hunter2"
+  attributes = { uidNumber = "1000" }
+}
 `))
 	out, err := execute(t, "check", path)
 	if err != nil {
