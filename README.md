@@ -210,8 +210,9 @@ person without the POSIX trio**, and one that filters on
 `(objectClass=posixGroup)` no longer sees a group without a `gidNumber`. This
 includes go-authn/directory's `ldapdir` up to v0.13.0, and so go-fileshare.
 Give people and groups those attributes, or point the consumer at
-`(objectClass=uidObject)`. go-authn/directory#32 widens ldapdir's defaults:
-the user filter to
+`(objectClass=uidObject)`. go-authn/directory **v0.14.0** widens ldapdir's
+defaults to match (go-fileshare reads authnd correctly from the release that
+requires it): the user filter to
 `(|(objectClass=posixAccount)(objectClass=account)(objectClass=uidObject))`,
 and the group filter to `(|(objectClass=posixGroup)(objectClass=groupOfNames))`,
 with `member` DNs matched to the people ldapdir imported.

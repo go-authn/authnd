@@ -42,7 +42,11 @@ person -- would each take SMB away from somebody with nothing on the console.
 - ⛔ A consumer filtering on `(objectClass=posixAccount)` no longer sees a
   person without the POSIX trio, and one filtering on
   `(objectClass=posixGroup)` no longer sees a group without a `gidNumber`
-  (go-authn/directory's ldapdir up to v0.13.0, and so go-fileshare).
+  (go-authn/directory's ldapdir up to v0.13.0, and so go-fileshare until it
+  requires directory v0.14.0, whose defaults read `account`, `uidObject` and
+  `groupOfNames`).
+- go-authn/directory v0.14.0: authnd's own `users "ldap"` source has those
+  wider defaults too.
 - A descriptive attribute no class of the entry allows is dropped, and the
   entry published with the rest; the startup log and `check` name it. An entry
   that still fails `schema.Validate` is not published.
