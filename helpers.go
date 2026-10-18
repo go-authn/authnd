@@ -12,6 +12,32 @@ import (
 
 // sorted is everybody, in a stable order: a listing that reshuffles itself
 // between two runs is one nobody can compare.
+// servedFrom names the sources somebody here is served from, in the order the
+// set asks them.
+//
+// The set's own Describe names every source it holds, and the configuration
+// file is always one -- a password change is written there -- so a server
+// with no user block said it served people "from the configuration file, then
+// a sqlite database": a file that served nobody. With nobody served at all,
+// the set's description is still the truthful answer to "from where".
+func (s *server) servedFrom() string {
+	where := map[string]bool{}
+	for _, id := range s.who() {
+		where[id.Where()] = true
+	}
+	var names []string
+	for _, src := range s.dir.Sources() {
+		if d := src.Describe(); where[d] {
+			names = append(names, d)
+			delete(where, d)
+		}
+	}
+	if len(names) == 0 {
+		return s.dir.Describe()
+	}
+	return strings.Join(names, ", then ")
+}
+
 func (s *server) sorted() []*directory.Identity {
 	who := s.who()
 	out := make([]*directory.Identity, 0, len(who))

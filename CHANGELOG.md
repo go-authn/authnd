@@ -3,7 +3,15 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
-## Unreleased
+## v0.11.1 — 2026-10-18
+
+- The startup line names only the sources somebody is served from. With no
+  `user` block it read "serving 5 people from the configuration file, then a
+  sqlite database": the configuration file is always in the set, because a
+  password change is written there, but it served nobody.
+- This file: v0.11.0 shipped with its section still headed "Unreleased".
+
+## v0.11.0 — 2026-10-18
 
 ### ⛔ Breaking for v0.10.x configurations: `publish_nt_hash` needs a `samba` block
 
