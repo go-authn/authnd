@@ -8,7 +8,7 @@ require (
 	github.com/go-authn/kdc v0.4.3
 	github.com/go-authn/ldap v0.8.0
 	github.com/go-authn/mfa v0.5.0
-	github.com/go-authn/oidc v0.4.1
+	github.com/go-authn/oidc v0.4.2
 	github.com/go-authn/totp v0.4.2
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/hashicorp/hcl/v2 v2.25.0
