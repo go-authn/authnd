@@ -1,6 +1,6 @@
 module github.com/go-authn/authnd
 
-go 1.27.1
+go 1.27.3
 
 require (
 	github.com/go-asn1-ber/asn1-ber v1.5.8

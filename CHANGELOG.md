@@ -5,6 +5,16 @@ are described in their pull requests and release notes.
 
 ## v0.12.0 — 2026-10-25
 
+### ⛔ Security: built with Go 1.27.3 (GO-2026-6809)
+
+authnd verifies certificates (`x509.Certificate.Verify`, reached from
+`main` per `govulncheck`), and Go 1.27.2's crypto/x509 did not distrust the
+compromised intermediate certificates GO-2026-6809 names. v0.11.1's release
+binaries were built with 1.27.2 and are affected. The release workflow now
+builds with 1.27.3, and the `go` directive is 1.27.3, so `go install`
+switches to the fixed toolchain by itself. `govulncheck` under 1.27.3: no
+vulnerabilities.
+
 ### Site schemas, and auxiliary object classes a source declares
 
 - `schema_files = [...]` loads OpenLDAP `.schema` and cn=config LDIF files as
