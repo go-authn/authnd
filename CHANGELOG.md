@@ -3,7 +3,7 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
-## Unreleased
+## v0.12.1 — 2026-10-25
 
 ### Schema refusals come from go-authn/ldap's typed BuildError
 
