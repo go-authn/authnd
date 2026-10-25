@@ -100,11 +100,18 @@ func (l *liveSource) GroupAttributes(group string) (directory.Attributes, error)
 	return l.p.Load().GroupAttributes(group)
 }
 
+// GroupObjectClasses makes a group block's object_classes reach the set, for
+// the reason GroupAttributes does.
+func (l *liveSource) GroupObjectClasses(group string) (directory.ObjectClasses, error) {
+	return l.p.Load().GroupObjectClasses(group)
+}
+
 // The interfaces the set asks of a source, checked here rather than found
 // missing at run time: a method left off is a silent difference, as
 // GroupAttributes was.
 var (
-	_ directory.Source          = (*liveSource)(nil)
-	_ directory.GroupLister     = (*liveSource)(nil)
-	_ directory.GroupAttributer = (*liveSource)(nil)
+	_ directory.Source             = (*liveSource)(nil)
+	_ directory.GroupLister        = (*liveSource)(nil)
+	_ directory.GroupAttributer    = (*liveSource)(nil)
+	_ directory.GroupObjectClasser = (*liveSource)(nil)
 )

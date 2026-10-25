@@ -59,8 +59,15 @@ type server struct {
 
 	// schema is what this server publishes at cn=Subschema and holds every
 	// entry it publishes to: go-authn/ldap's standard schema, with Samba's
-	// sambaSamAccount when the samba block is there.
+	// sambaSamAccount when the samba block is there, and what schema_files
+	// and the schema blocks add (siteschema.go).
 	schema *schema.Schema
+	// added is what each schema file and schema block added, for the
+	// startup log and `check`.
+	added []addition
+	// declared is every declared object class that passed checkDeclared, by
+	// its name as declared, lower-cased (declared.go).
+	declared map[string]*schema.ObjectClass
 
 	// policy is what a bind must satisfy, and codes remembers which one-time
 	// codes have been used -- a code is valid for a whole step, so a server
@@ -100,7 +107,12 @@ func open(cfg *config, out io.Writer) (*server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.schema = sch
+	s.schema, s.added = sch.schema, sch.added
+	// Before any source is opened: a declared class the schema refuses is a
+	// configuration error, and finding it should not wait on a database.
+	if err := s.checkDeclared(); err != nil {
+		return nil, err
+	}
 	if m := cfg.MFA; m != nil {
 		s.policy = mfa.Policy{Count: m.Factors, DistinctKinds: m.DistinctKinds}
 		if s.policy.Count == 0 {
@@ -330,6 +342,9 @@ func (s *server) listen() error {
 	// What is held back is said at startup as well as by `check`: an entry
 	// that fails the schema is not published, and a journal is where
 	// somebody looks when a person is missing from a search.
+	for _, l := range s.schemaLines() {
+		fmt.Fprintln(s.out, l)
+	}
 	p := s.publish()
 	for _, e := range p.rejected() {
 		fmt.Fprintf(s.out, "%s is NOT published: it fails the schema: %s\n", e.DN, strings.Join(problems(e.invalid), "; "))
@@ -340,6 +355,9 @@ func (s *server) listen() error {
 		}
 		if e.noSID != "" {
 			fmt.Fprintf(s.out, "%s is published without sambaNTPassword: %s\n", e.DN, e.noSID)
+		}
+		for _, l := range leftOffLines(e, e.DN) {
+			fmt.Fprintln(s.out, l)
 		}
 		for _, d := range e.dropped {
 			fmt.Fprintf(s.out, "%s is published without %s: %s\n", e.DN, d.name, d.why)
