@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -399,35 +400,44 @@ func TestASchemaFileThatDoesNotBuildRefusesStartup(t *testing.T) {
 	}{
 		{"unknown MAY", "# a comment\n\nattributetype ( 1.3.6.1.4.1.99999.9.1 NAME 'exampleA'\n  SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 )\n\n" +
 			"objectclass ( 1.3.6.1.4.1.99999.9.2 NAME 'exampleB' SUP top AUXILIARY\n  MAY noSuchAttribute )\n",
-			nil, ":6: the object class exampleB has MAY noSuchAttribute, which is not a defined attribute type"},
+			nil, ":6:1: the object class exampleB has MAY noSuchAttribute, which is not a defined attribute type (unknown reference)"},
 		{"unknown superclass", "objectclass ( 1.3.6.1.4.1.99999.9.2 NAME 'exampleB' SUP noSuchClass AUXILIARY )\n",
-			nil, ":1: the object class exampleB has the superclass noSuchClass, which is not defined"},
+			nil, ":1:1: the object class exampleB has the superclass noSuchClass, which is not defined (unknown reference)"},
 		{"unknown syntax", "attributetype ( 1.3.6.1.4.1.99999.9.1 NAME 'exampleA' SYNTAX 1.2.3.4 )\n",
-			nil, ":1: the attribute type exampleA has the syntax 1.2.3.4, which is not defined"},
+			nil, ":1:1: the attribute type exampleA has the syntax 1.2.3.4, which is not defined (unknown reference)"},
 		{"unknown rule", "attributetype ( 1.3.6.1.4.1.99999.9.1 NAME 'exampleA' EQUALITY noSuchMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 )\n",
-			nil, ":1: the attribute type exampleA has the EQUALITY rule noSuchMatch, which is not defined"},
-		{"structural from auxiliary", "objectclass ( 1.3.6.1.4.1.99999.9.2 NAME 'exampleB' SUP uidObject STRUCTURAL )\n",
-			nil, ":1: the structural class exampleB derives from the auxiliary class uidObject"},
+			nil, ":1:1: the attribute type exampleA has the EQUALITY rule noSuchMatch, which is not defined (unknown reference)"},
+		{"structural from auxiliary", "\n\nobjectclass ( 1.3.6.1.4.1.99999.9.2 NAME 'exampleB'\n SUP uidObject STRUCTURAL )\n",
+			nil, ":3:1: the structural class exampleB derives from the auxiliary class uidObject (RFC 4512 2.4.2) (kind violation)"},
 		{"rule with unknown syntax", "matchingrule ( 1.3.6.1.4.1.99999.9.3 NAME 'exampleMatch' SYNTAX 1.2.3.4 )\n",
-			nil, ":1: the matching rule exampleMatch has the syntax 1.2.3.4, which is not defined"},
+			nil, ":1:1: the matching rule exampleMatch has the syntax 1.2.3.4, which is not defined (unknown reference)"},
+		{"a usage mismatch", "attributetype ( 1.3.6.1.4.1.99999.9.1 NAME 'exampleA' SUP name USAGE dSAOperation )\n",
+			nil, ":1:1: the attribute type exampleA is dSAOperation and its supertype name is userApplications (RFC 4512 2.5.1) (usage mismatch)"},
+		{"a supertype cycle", "attributetype ( 1.3.6.1.4.1.99999.9.1 NAME 'exampleA' SUP exampleB )\nattributetype ( 1.3.6.1.4.1.99999.9.2 NAME 'exampleB' SUP exampleA )\n",
+			nil, ":1:1: the attribute type exampleA is its own supertype (superior cycle)"},
 		{"the same cn", "attributetype ( 2.5.4.3 NAME 'cn'\n\t   SUP name )\n",
-			nil, ":1: the attribute type cn (2.5.4.3) is already defined by the standard schema, and this is the same definition, word for word"},
+			nil, ":1:1: the attribute type cn (2.5.4.3) is already defined by the standard schema (rfc4519.schema:42:1), and this is the same definition, word for word"},
 		{"a different cn", "attributetype ( 2.5.4.3 NAME 'cn' SUP name SINGLE-VALUE )\n",
-			nil, ":1: the attribute type cn (2.5.4.3) is already defined by the standard schema, and this is a different definition"},
+			nil, ":1:1: the attribute type cn (2.5.4.3) is already defined by the standard schema (rfc4519.schema:42:1), and this is a different definition"},
 		{"cn under another OID", "attributetype ( 1.3.6.1.4.1.99999.9.1 NAME 'cn' SUP name )\n",
-			nil, ":1: the attribute type cn (1.3.6.1.4.1.99999.9.1) is already defined by the standard schema"},
+			nil, ":1:1: the attribute type cn (1.3.6.1.4.1.99999.9.1) is already defined by the standard schema (rfc4519.schema:42:1)"},
 		{"the same class twice", "objectclass ( 1.3.6.1.4.1.99999.9.2 NAME 'exampleB' SUP top AUXILIARY )\n" +
 			"objectclass ( 1.3.6.1.4.1.99999.9.2 NAME 'exampleC' SUP top AUXILIARY )\n",
-			nil, ":2: the object class 1.3.6.1.4.1.99999.9.2 is defined twice"},
+			nil, ":2:1: the object class 1.3.6.1.4.1.99999.9.2 is defined twice (first defined at "},
+		{"a name twice", "objectclass ( 1.3.6.1.4.1.99999.9.2 NAME 'exampleB' SUP top AUXILIARY )\n\n" +
+			"objectclass ( 1.3.6.1.4.1.99999.9.3 NAME 'EXAMPLEB' SUP top AUXILIARY )\n",
+			nil, ":3:1: the name \"EXAMPLEB\" is given to two object classes (first defined at "},
 		{"an earlier file's", "attributetype ( 1.3.6.1.4.1.99999.1.1 NAME 'exampleBadge' SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 )\n",
-			[]string{example}, ":1: the attribute type exampleBadge (1.3.6.1.4.1.99999.1.1) is already defined by " + example + ", and this is a different definition"},
+			[]string{example}, ":1:1: the attribute type exampleBadge (1.3.6.1.4.1.99999.1.1) is already defined by " + example + ":"},
 		{"a syntax", "ldapsyntax ( 1.3.6.1.4.1.1466.115.121.1.15 DESC 'again' )\n",
-			nil, ":1: the syntax 1.3.6.1.4.1.1466.115.121.1.15 (1.3.6.1.4.1.1466.115.121.1.15) is already defined by the standard schema"},
+			nil, ":1:1: the syntax 1.3.6.1.4.1.1466.115.121.1.15 (1.3.6.1.4.1.1466.115.121.1.15) is already defined by the standard schema (rfc4517.schema:"},
+		{"a matching rule", "matchingrule ( 1.3.6.1.4.1.99999.9.3 NAME 'caseIgnoreMatch' SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 )\n",
+			nil, ":1:1: the matching rule caseIgnoreMatch (1.3.6.1.4.1.99999.9.3) is already defined by the standard schema (rfc4517.schema:"},
 		{"LDIF", "dn: cn=x,cn=schema,cn=config\nobjectClass: olcSchemaConfig\nolcObjectClasses: {0}( 1.3.6.1.4.1.99999.9.2 NAME 'exampleB'\n  SUP top AUXILIARY MAY noSuchAttribute )\n",
-			nil, ":3: the object class exampleB has MAY noSuchAttribute"},
+			nil, ":3:1: the object class exampleB has MAY noSuchAttribute"},
 		{"CRLF and a joining backslash", "attributetype ( 1.3.6.1.4.1.99999.9.1 NAME 'exampleA' \\\r\nSYNTAX 1.3.6.1.4.1.1466.115.121.1.15 )\r\n\r\n" +
 			"objectclass ( 1.3.6.1.4.1.99999.9.2 NAME 'exampleB'\r\n  SUP top AUXILIARY MAY nothingHere )\r\n",
-			nil, ":4: the object class exampleB has MAY nothingHere"},
+			nil, ":4:1: the object class exampleB has MAY nothingHere"},
 		{"a parse error", "attributetype ( 1.3.6.1.4.1.99999.9.1 NAME 'exampleA'\n  SYNTAX )\n",
 			nil, ".schema:2:"},
 	} {
@@ -469,7 +479,7 @@ samba { domain_sid = "S-1-5-21-1-2-3" }
 schema_files    = [%q]
 user "a" { password = "x" }
 `, path))
-	want := path + ":1: the attribute type sambaSID (1.3.6.1.4.1.7165.2.1.20) is already defined by the standard schema, or samba.schema (the samba block)"
+	want := path + ":1:1: the attribute type sambaSID (1.3.6.1.4.1.7165.2.1.20) is already defined by the standard schema, or samba.schema (the samba block)"
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Errorf("%v, want %q", err, want)
 	}
@@ -614,33 +624,44 @@ func TestAClassNobodyCheckedIsLeftOff(t *testing.T) {
 	contains(t, strings.Join(leftOffLines(ann, "ann"), "\n"), "ann is published without exampleOccupant: the class was not checked at startup")
 }
 
-// locate, on any file the reader accepts, points at a line of the file whose
-// record holds the definition: reading the file from that line on, alone,
-// yields that definition first among its kind.
-func FuzzLocate(f *testing.F) {
-	f.Add([]byte("objectidentifier a 1.3.6.1.4.1.99999\nattributetype ( a:1 NAME 'x'\n  SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 )\n" +
-		"# c\nobjectclass ( a:2 NAME 'y' SUP top AUXILIARY MAY x )\n"))
-	f.Add([]byte("dn: cn=x\nolcAttributeTypes: {0}( 1.1.1 NAME 'x'\n  SYNTAX 1.1 )\nolcObjectClasses: ( 1.1.2 NAME 'y' )\n"))
-	f.Add([]byte("attributetype ( 1.1.1 NAME 'x' \\\r\nSYNTAX 1.1 )\r\n\r\nattributetype ( 1.1.2 NAME 'z' SYNTAX 1.1 )\r\n"))
+// What a site file that does not build on the standard schema is refused
+// with points at a line of the file that starts a record -- not a
+// continuation, not a comment -- and that the operator can read from there:
+// the file's definition read from that line on, alone, is the one refused.
+// The line comes from go-authn/ldap's BuildError; this holds authnd's use of
+// it, not ldap's reader (FuzzBuildErrorPosition there).
+func FuzzSchemaFileRefusal(f *testing.F) {
+	f.Add([]byte("attributetype ( 1.3.6.1.4.1.99999.9.1 NAME 'x'\n  SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 )\n" +
+		"# c\nobjectclass ( 1.3.6.1.4.1.99999.9.2 NAME 'y' SUP top AUXILIARY MAY nope )\n"))
+	f.Add([]byte("dn: cn=x\nolcAttributeTypes: {0}( 2.5.4.3 NAME 'x'\n  SUP name )\nolcObjectClasses: ( 1.1.2 NAME 'y' )\n"))
+	f.Add([]byte("attributetype ( 1.1.1 NAME 'x' \\\r\nSYNTAX 1.1 )\r\n\r\nattributetype ( 1.1.2 NAME 'CN' SUP name )\r\n"))
+	std, err := schema.Read(schema.StandardFiles()...)
+	if err != nil {
+		f.Fatal(err)
+	}
 	f.Fuzz(func(t *testing.T, data []byte) {
 		if len(data) > 1<<14 || strings.Contains(string(data), "objectidentifier") {
-			return // macros make a suffix unreadable alone; covered by the seeds' whole-file reads
+			return // a macro makes a suffix unreadable alone
 		}
 		file := schema.File{Name: "f", Data: data}
 		d, err := schema.Read(file)
 		if err != nil {
 			return
 		}
+		_, err = schema.BuildFrom(std, d)
+		var be *schema.BuildError
+		if !errors.As(err, &be) {
+			return
+		}
+		got := refusal(err, d, ownersOf(std, "the standard schema"), "f")
 		lines := strings.Split(string(data), "\n")
-		for i, x := range d.AttributeTypes {
-			line := locate(nil, file, culprit{kind: "attribute type", index: i})
-			if line < 1 || line > len(lines) {
-				t.Fatalf("attribute type %d (%s) located at line %d of %d", i, x.Name(), line, len(lines))
-			}
-			rest, err := schema.Read(schema.File{Name: "f", Data: []byte(strings.Join(lines[line-1:], "\n"))})
-			if err != nil || len(rest.AttributeTypes) == 0 || rest.AttributeTypes[0].String() != x.String() {
-				t.Fatalf("attribute type %d (%s) located at line %d, where the file reads otherwise (%v)", i, x.Name(), line, err)
-			}
+		line := be.Pos.Line
+		if line < 1 || line > len(lines) || !strings.HasPrefix(got, fmt.Sprintf("f:%d:1: ", line)) {
+			t.Fatalf("refused at %q, outside the file's %d lines or not where the error is (%+v)", got, len(lines), be.Pos)
+		}
+		rest, err := schema.Read(schema.File{Name: "f", Data: []byte(strings.Join(lines[line-1:], "\n"))})
+		if err != nil || definitionAt(rest, &schema.BuildError{Element: be.Element, OID: be.OID, Pos: schema.Position{File: "f", Line: 1, Column: 1}}) == nil {
+			t.Fatalf("%q: the file read from line %d does not start with the definition refused (%v)", got, line, err)
 		}
 	})
 }
@@ -662,17 +683,22 @@ func TestSiteSchemaHelpers(t *testing.T) {
 			t.Errorf("slapdKind(%q) = %q", k, got)
 		}
 	}
-	// An error findCulprit cannot place is said as it is.
-	if got := refusal(fmt.Errorf("schema: something else"), &schema.Definitions{}, owners{}, nil); got != "schema: something else" {
+	// An error that is not a BuildError is said as it is.
+	if got := refusal(fmt.Errorf("schema: something else"), &schema.Definitions{}, owners{}, "f"); got != "schema: something else" {
 		t.Errorf("refusal = %q", got)
 	}
-	// locate gives up (0) on what it cannot read, rather than guessing.
-	bad := schema.File{Name: "bad", Data: []byte("nonsense here\n")}
-	if got := locate([]schema.File{bad}, bad, culprit{kind: "object class"}); got != 0 {
-		t.Errorf("locate after an unreadable file = %d", got)
+	// A BuildError with no position -- definitions made in code -- is said
+	// at the file or block it came from.
+	_, err := schema.BuildFrom(&schema.Definitions{ObjectClasses: []*schema.ObjectClass{{OID: "1.1", Sup: []string{"x"}}}})
+	if got, want := refusal(err, &schema.Definitions{}, owners{}, "the schema block at c.hcl:3:1"),
+		"the schema block at c.hcl:3:1: the object class 1.1 has the superclass x, which is not defined (unknown reference)"; got != want {
+		t.Errorf("refusal = %q, want %q", got, want)
 	}
-	// A file with no line that starts a record has nowhere to point.
-	if got := locate(nil, schema.File{Name: "x", Data: []byte("\n\n")}, culprit{kind: "syntax"}); got != 0 {
-		t.Errorf("locate in an empty file = %d", got)
+	// definitionAt finds nothing for an element or a position nothing has.
+	d := &schema.Definitions{MatchingRules: []*schema.MatchingRule{{OID: "1.1"}}}
+	for _, be := range []*schema.BuildError{{Element: 0, OID: "1.1"}, {Element: schema.ElementMatchingRule, OID: "1.1", Pos: schema.Position{Line: 2}}} {
+		if got := definitionAt(d, be); got != nil {
+			t.Errorf("definitionAt(%+v) = %v", be, got)
+		}
 	}
 }

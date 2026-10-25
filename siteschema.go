@@ -3,7 +3,7 @@
 package main
 
 import (
-	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -138,12 +138,7 @@ func directorySchema(cfg *config) (*builtSchema, error) {
 		}
 		mine := since(all, site)
 		if _, err := schema.BuildFrom(base, all); err != nil {
-			return nil, fmt.Errorf("schema_files: %s", refusal(err, mine, owners, func(c culprit) string {
-				if line := locate(read, f, c); line > 0 {
-					return fmt.Sprintf("%s:%d", path, line)
-				}
-				return path
-			}))
+			return nil, fmt.Errorf("schema_files: %s", refusal(err, mine, owners, path))
 		}
 		owners.add(mine, path)
 		read, site = append(read, f), all
@@ -155,7 +150,7 @@ func directorySchema(cfg *config) (*builtSchema, error) {
 		return nil, err
 	}
 	local := &schema.Definitions{}
-	for i, f := range files {
+	for i := range files {
 		all, err := hclschema.Decode(files[:i+1]...)
 		if err != nil {
 			return nil, fmt.Errorf("schema block: %w", err)
@@ -164,9 +159,7 @@ func directorySchema(cfg *config) (*builtSchema, error) {
 		block := cfg.Schemas[i]
 		where := "the schema block at " + position(block.DefRange)
 		if _, err := schema.BuildFrom(base, site, all); err != nil {
-			return nil, fmt.Errorf("schema block: %s", refusal(err, mine, owners, func(c culprit) string {
-				return position(labelled(block.Body, f.Name, c))
-			}))
+			return nil, fmt.Errorf("schema block: %s", refusal(err, mine, owners, position(block.DefRange)))
 		}
 		owners.add(mine, where)
 		local = all
@@ -315,100 +308,94 @@ func (o owners) add(d *schema.Definitions, where string) {
 	}
 }
 
-// A culprit is the definition a build refused, in the file that added it.
-type culprit struct {
-	kind  string // "attribute type", "object class", "matching rule", "syntax"
-	index int    // among that file's definitions of that kind
-	oid   string
-	names []string
-	def   fmt.Stringer
-}
-
-func (c culprit) name() string {
-	if len(c.names) > 0 {
-		return c.names[0]
-	}
-	return c.oid
-}
-
-// findCulprit is the definition of d that schema.BuildFrom's error is about.
+// refusal says why the definitions one file or block added did not build,
+// at the line of the definition refused.
 //
-// go-authn/ldap v0.9.0's link errors are not typed: each names the definition
-// it refuses, first, in a fixed sentence ("schema: the attribute type X has
-// ...", "... is defined twice", "the name \"x\" is given to two ..."). This
-// matches those sentences against the definitions of the one file the build
-// was refused for -- every file before it built -- and the tests hold each
-// sentence to a refusal with a line number, so a change of wording upstream
-// fails here rather than losing the line. When several match, the last
-// wins: of two definitions with one OID, the second is the redefinition.
-func findCulprit(err error, d *schema.Definitions) (culprit, bool) {
-	msg := err.Error()
-	var found culprit
-	ok := false
-	try := func(c culprit, prefixes ...string) {
-		for _, p := range prefixes {
-			if strings.HasPrefix(msg, p) {
-				found, ok = c, true
-				return
-			}
-		}
-	}
-	names := func(what string, list []string) []string {
-		var out []string
-		for _, n := range list {
-			out = append(out, fmt.Sprintf("schema: the name %q is given to two %ss", n, what))
-		}
-		return out
-	}
-	for i, x := range d.Syntaxes {
-		try(culprit{"syntax", i, x.OID, nil, x}, "schema: the syntax "+x.OID+" is defined twice")
-	}
-	for i, x := range d.MatchingRules {
-		c := culprit{"matching rule", i, x.OID, x.Names, x}
-		try(c, append(names("matching rule", x.Names),
-			"schema: the matching rule "+x.Name()+" ", "schema: the matching rule "+x.OID+" is defined twice")...)
-	}
-	for i, x := range d.AttributeTypes {
-		c := culprit{"attribute type", i, x.OID, x.Names, x}
-		try(c, append(names("attribute type", x.Names),
-			"schema: the attribute type "+x.Name()+" ", "schema: the attribute type "+x.OID+" is defined twice")...)
-	}
-	for i, x := range d.ObjectClasses {
-		c := culprit{"object class", i, x.OID, x.Names, x}
-		try(c, append(names("object class", x.Names),
-			"schema: the object class "+x.Name()+" ", "schema: the object class "+x.OID+" is defined twice",
-			"schema: the abstract class "+x.Name()+" ", "schema: the structural class "+x.Name()+" ",
-			"schema: the auxiliary class "+x.Name()+" ")...)
-	}
-	return found, ok
-}
-
-// refusal says why a file's definitions did not build, at the place where
-// says the culprit is.
-func refusal(err error, mine *schema.Definitions, o owners, where func(culprit) string) string {
-	c, ok := findCulprit(err, mine)
-	if !ok {
+// go-authn/ldap's *schema.BuildError says which definition it refused, why,
+// and where the definition starts -- the file and line the reader found it
+// on, before any continuation line was joined to it, or the block's own
+// line and column -- so nothing here reads the message to find the
+// definition, or re-reads the file to find its line. where (the file as
+// named in schema_files, or the block's position) is said instead only when
+// the error carries no position, which a definition read from a file or a
+// block always has; an error that is not a BuildError is said as it is.
+//
+// A DuplicateOID or DuplicateName whose first definition is the standard
+// schema's, Samba's, or an earlier file's or block's is a redefinition, and
+// is said as one: what defined it first, where, and whether the two say the
+// same thing.
+func refusal(err error, mine *schema.Definitions, o owners, where string) string {
+	var be *schema.BuildError
+	if !errors.As(err, &be) {
 		return err.Error()
 	}
-	at := where(c)
-	var prev owned
-	var have bool
-	for _, k := range append([]string{c.oid}, c.names...) {
-		if prev, have = o[c.kind+" "+strings.ToLower(k)]; have {
-			break
-		}
+	at := where
+	if be.Pos.IsValid() {
+		at = be.Pos.String()
 	}
-	if !have {
-		return fmt.Sprintf("%s: %s", at, strings.TrimPrefix(err.Error(), "schema: "))
+	prev, redefined := owned{}, false
+	if be.Kind == schema.DuplicateOID || be.Kind == schema.DuplicateName {
+		prev, redefined = o[be.Element.String()+" "+strings.ToLower(be.RefOID)]
+	}
+	if !redefined {
+		// The message without its position, as BuildError words one that
+		// has none: "schema: " and ldap's sentence.
+		bare := *be
+		bare.Pos = schema.Position{}
+		return fmt.Sprintf("%s: %s (%s)", at, strings.TrimPrefix(bare.Error(), "schema: "), be.Kind)
+	}
+	name := be.Name
+	if name == "" {
+		name = be.OID
+	}
+	first := prev.where
+	switch {
+	case be.RefPos.IsValid() && be.RefPos.File == prev.where:
+		first = be.RefPos.String() // an earlier file: its own line
+	case be.RefPos.IsValid():
+		first += " (" + be.RefPos.String() + ")" // which file of the standard schema, or which block
 	}
 	same := "a different definition"
-	if prev.def.String() == c.def.String() {
+	if def := definitionAt(mine, be); def != nil && prev.def.String() == def.String() {
 		same = "the same definition, word for word"
 	}
 	return fmt.Sprintf("%s: the %s %s (%s) is already defined by %s, and this is %s: "+
 		"a schema file adds definitions and never replaces one -- slapd refuses this too "+
 		"(\"Duplicate %s\", servers/slapd/at.c and oc.c). Remove it from this file",
-		at, c.kind, c.name(), c.oid, prev.where, same, slapdKind(c.kind))
+		at, be.Element, name, be.OID, first, same, slapdKind(be.Element.String()))
+}
+
+// definitionAt is the definition of d a BuildError is about: the one of its
+// element with its OID that starts where it says.
+func definitionAt(d *schema.Definitions, be *schema.BuildError) fmt.Stringer {
+	match := func(oid string, pos schema.Position) bool { return oid == be.OID && pos == be.Pos }
+	switch be.Element {
+	case schema.ElementSyntax:
+		for _, x := range d.Syntaxes {
+			if match(x.OID, x.Pos) {
+				return x
+			}
+		}
+	case schema.ElementMatchingRule:
+		for _, x := range d.MatchingRules {
+			if match(x.OID, x.Pos) {
+				return x
+			}
+		}
+	case schema.ElementAttributeType:
+		for _, x := range d.AttributeTypes {
+			if match(x.OID, x.Pos) {
+				return x
+			}
+		}
+	case schema.ElementObjectClass:
+		for _, x := range d.ObjectClasses {
+			if match(x.OID, x.Pos) {
+				return x
+			}
+		}
+	}
+	return nil
 }
 
 // slapdKind is how slapd's error table spells a kind (schemaparse.c, err2text).
@@ -422,97 +409,6 @@ func slapdKind(kind string) string {
 		return "matchingRule"
 	}
 	return "ldapSyntax"
-}
-
-// count is how many definitions of a kind d holds.
-func (c culprit) count(d *schema.Definitions) int {
-	switch c.kind {
-	case "syntax":
-		return len(d.Syntaxes)
-	case "matching rule":
-		return len(d.MatchingRules)
-	case "attribute type":
-		return len(d.AttributeTypes)
-	}
-	return len(d.ObjectClasses)
-}
-
-// locate is the line of f the culprit's definition starts on, or 0.
-//
-// schema.Definitions carry no positions, so the reader itself is asked: f cut
-// before a line that starts a record -- a line that does not begin with white
-// space, after a line that does not end in a joining backslash, which is
-// where both of its forms start a new definition (slapd.conf(5); RFC 2849) --
-// is a file whose definitions are the ones before that line, read exactly as
-// the whole file was. The line is found by bisection over those cuts: the
-// first cut holding more than index definitions of the kind is the record
-// after the culprit's.
-func locate(before []schema.File, f schema.File, c culprit) int {
-	type cut struct{ line, off int }
-	var cuts []cut
-	off, prevJoins := 0, false
-	for i, raw := range bytes.Split(f.Data, []byte("\n")) {
-		l := bytes.TrimSuffix(raw, []byte("\r"))
-		if len(l) > 0 && l[0] != ' ' && l[0] != '\t' && !prevJoins {
-			cuts = append(cuts, cut{i + 1, off})
-		}
-		prevJoins = bytes.HasSuffix(l, []byte(`\`)) && !bytes.HasSuffix(l, []byte(`\\`))
-		off += len(raw) + 1
-	}
-	prev, err := schema.Read(before...)
-	if err != nil {
-		return 0
-	}
-	base := c.count(prev)
-	holds := func(j int) (bool, error) {
-		if j == len(cuts) {
-			return true, nil
-		}
-		d, err := schema.Read(append(before, schema.File{Name: f.Name, Data: f.Data[:cuts[j].off]})...)
-		if err != nil {
-			return false, err
-		}
-		return c.count(d)-base > c.index, nil
-	}
-	lo, hi := 0, len(cuts)
-	for lo < hi {
-		mid := (lo + hi) / 2
-		ok, err := holds(mid)
-		if err != nil {
-			return 0
-		}
-		if ok {
-			hi = mid
-		} else {
-			lo = mid + 1
-		}
-	}
-	if lo == 0 {
-		return 0
-	}
-	return cuts[lo-1].line
-}
-
-// labelled is where a schema block defines the culprit: the block of its
-// kind labelled with one of its names or its OID, or the schema block itself.
-func labelled(b hcl.Body, file string, c culprit) hcl.Range {
-	kinds := map[string]string{"attribute type": "attribute_type", "object class": "object_class",
-		"matching rule": "matching_rule", "syntax": "ldap_syntax"}
-	body, ok := b.(*hclsyntax.Body)
-	if !ok {
-		return hcl.Range{Filename: file}
-	}
-	for _, blk := range body.Blocks {
-		if blk.Type != kinds[c.kind] || len(blk.Labels) == 0 {
-			continue
-		}
-		for _, k := range append([]string{c.oid}, c.names...) {
-			if strings.EqualFold(blk.Labels[0], k) {
-				return blk.DefRange()
-			}
-		}
-	}
-	return body.SrcRange
 }
 
 // describeAddition is "67 attribute types and 8 object classes".
