@@ -128,23 +128,23 @@ func (s *server) declarable(name string) (*schema.ObjectClass, error) {
 	oc := s.schema.ObjectClass(name)
 	for _, d := range derivedClasses {
 		if strings.EqualFold(d, name) || (oc != nil && oc == s.schema.ObjectClass(d)) {
-			return nil, fmt.Errorf("%w: %s is a class authnd derives itself, from what each person or group has "+
-				"(see `authnd check`), and a declaration cannot overrule that", errNotDeclarable, name)
+			return nil, fmt.Errorf("%s is a class authnd derives itself, from what each person or group has "+
+				"(see `authnd check`), and a declaration cannot overrule that", name)
 		}
 	}
 	if oc == nil {
-		return nil, fmt.Errorf("%w: the schema served here does not define %s: load the file that does with "+
-			"schema_files, or define it in a schema block", errNotDeclarable, name)
+		return nil, fmt.Errorf("the schema served here does not define %s: load the file that does with "+
+			"schema_files, or define it in a schema block", name)
 	}
 	switch oc.Kind {
 	case schema.Auxiliary:
 		return oc, nil
 	case schema.Structural:
-		return nil, fmt.Errorf("%w: %s is STRUCTURAL, and an entry has exactly one structural chain (RFC 4512 §2.4.2), "+
-			"which authnd chooses: only an AUXILIARY class (§4.1.1) can be declared", errNotDeclarable, name)
+		return nil, fmt.Errorf("%s is STRUCTURAL, and an entry has exactly one structural chain (RFC 4512 §2.4.2), "+
+			"which authnd chooses: only an AUXILIARY class (§4.1.1) can be declared", name)
 	}
-	return nil, fmt.Errorf("%w: %s is ABSTRACT, which is only ever a superclass (RFC 4512 §2.4.1): "+
-		"only an AUXILIARY class (§4.1.1) can be declared", errNotDeclarable, name)
+	return nil, fmt.Errorf("%s is ABSTRACT, which is only ever a superclass (RFC 4512 §2.4.1): "+
+		"only an AUXILIARY class (§4.1.1) can be declared", name)
 }
 
 // withDeclared is classes with each declared class not in skip added after
@@ -171,7 +171,7 @@ func (s *server) withDeclared(classes, declared []string, skip map[string]bool) 
 	}
 	for _, n := range declared {
 		oc := s.declared[strings.ToLower(n)]
-		if oc == nil || skip[strings.ToLower(oc.Name())] {
+		if oc == nil || skip[strings.ToLower(oc.Name())] || slices.Contains(added, oc.Name()) {
 			continue
 		}
 		walk(oc)
@@ -234,8 +234,8 @@ func leftOffLines(e *entry, what string) []string {
 			out = append(out, fmt.Sprintf("%s is published without %s: the class was not checked at startup", what, l.class))
 			continue
 		}
-		out = append(out, fmt.Sprintf("%s is published without %s, which its source declares: %s has %s, which %s requires "+
-			"(its other attributes are dropped below)", what, l.class, what, describeMissing(l.missing), l.class))
+		out = append(out, fmt.Sprintf("%s is published without %s, which its source declares: %s has %s, which %s requires",
+			what, l.class, what, describeMissing(l.missing), l.class))
 	}
 	return out
 }

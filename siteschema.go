@@ -4,7 +4,6 @@ package main
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -74,9 +73,11 @@ import (
 // Body-level API in go-authn/ldap.
 
 // A schemaBlock is one `schema { ... }`: its body is kept as it was parsed and
-// decoded by hclschema, not by gohcl.
+// decoded by hclschema, not by gohcl. (",remain" rather than ",body": with
+// ",body" gohcl also checks the body against the struct's empty schema and
+// refuses every block in it.)
 type schemaBlock struct {
-	Body     hcl.Body  `hcl:",body"`
+	Body     hcl.Body  `hcl:",remain"`
 	DefRange hcl.Range `hcl:",def_range"`
 }
 
@@ -548,6 +549,3 @@ func namesOf(d *schema.Definitions) []string {
 	}
 	return out
 }
-
-// errNotDeclarable is the error a declared object class is refused with.
-var errNotDeclarable = errors.New("not a class a configuration can declare")
