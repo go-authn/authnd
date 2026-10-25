@@ -272,6 +272,37 @@ followed by 2 × `uidNumber` + 1000 (Samba's algorithmic mapping;
 `algorithmic_rid_base` changes the 1000). Without the block, authnd refuses to
 start and says what to add.
 
+### Site schemas and declared classes (optional)
+
+To serve SUPANN, eduPerson or a site's own attributes, install the schema files
+the site's slapd already loads beside the configuration -- `root:authnd`, mode
+`0640`: they are not secrets, but they decide what every entry may hold -- and
+name them:
+
+```sh
+sudo install -o root -g authnd -m 0640 supann.schema eduperson.ldif /etc/authnd/
+```
+
+```hcl
+schema_files = ["/etc/authnd/supann.schema", "/etc/authnd/eduperson.ldif"]
+
+users "sql" {
+  # ...
+  users_attributes = "select login, etab as \"supannEtablissement\" from staff"
+  object_classes   = ["supannPerson", "eduPerson"]
+}
+```
+
+Use absolute paths: a relative one is relative to the working directory, which
+is `/` under systemd. Each file is read once, at startup, and must be a regular
+file of at most 4 MiB. A file that does not build, or that redefines a
+definition already there (even identically, as slapd refuses), stops startup
+with the file and line. A declared class must be AUXILIARY and not one authnd
+derives itself; `authnd check` lists what each file adds, what each source
+declares, and who is published without a declared class because they lack one
+of its MUST attributes. Site-local definitions go in a `schema { ... }` block
+(literal values only); see the README.
+
 ## 5. A Kerberos realm (optional)
 
 ```hcl
