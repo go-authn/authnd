@@ -3,6 +3,21 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## Unreleased
+
+### Schema refusals come from go-authn/ldap's typed BuildError
+
+- A `schema_files` file or `schema` block that does not build is refused at
+  the position go-authn/ldap v0.10.0's `*schema.BuildError` carries -- the
+  line (and column) where the definition starts -- and the message now ends
+  with the kind of refusal (`unknown reference`, `duplicate OID`, `kind
+  violation` ...). A duplicate says where its first definition is, a
+  redefinition which standard file or which line of an earlier file holds
+  the original. Nothing reads ldap's message sentences or re-reads the file
+  any more, so a change of wording there cannot misplace the line.
+- Positions gain a column: `site.schema:6:` becomes `site.schema:6:1:`.
+- `the name "x" is given to two object classs` reads `object classes`.
+
 ## v0.12.0 — 2026-10-25
 
 ### ⛔ Security: built with Go 1.27.3 (GO-2026-6809)

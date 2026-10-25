@@ -302,10 +302,17 @@ group "staff" { object_classes = ["supannGroupe"] ... }
   other path in the configuration. Each file must be a regular file of at most
   4 MiB (go-authn/ldap's `schema.MaxFileSize`, applied while reading); it is read
   once, at startup.
-- **A file that does not build refuses startup and `check`**, with the file
-  and the line of the definition: an unknown superclass, attribute, rule or
-  syntax, a structural class derived from an auxiliary one, an OID or a name
-  defined twice.
+- **A file that does not build refuses startup and `check`**, with the file,
+  the line and column where the definition starts, and the kind of refusal:
+  an unknown superclass, attribute, rule or syntax, a structural class derived
+  from an auxiliary one, a usage or supertype rule broken, an OID or a name
+  defined twice (with where it was first defined). The place and the kind come
+  from go-authn/ldap's typed `*schema.BuildError`, not from reading its
+  message:
+
+  ```
+  schema_files: site.schema:6:1: the object class exampleB has MAY noSuchAttribute, which is not a defined attribute type (unknown reference)
+  ```
 - ⛔ **A file may not redefine a definition that is already there** -- the
   standard schema's, Samba's, or an earlier file's -- **even word for word**.
   That is slapd's rule: a schema file's definitions go through `parse_at` /
@@ -317,8 +324,8 @@ group "staff" { object_classes = ["supannGroupe"] ... }
   refusal says whether the text was the same:
 
   ```
-  schema_files: /etc/authnd/core-copy.schema:1: the attribute type cn (2.5.4.3) is already defined by the standard
-  schema, and this is the same definition, word for word: a schema file adds definitions and never replaces one --
+  schema_files: /etc/authnd/core-copy.schema:1:1: the attribute type cn (2.5.4.3) is already defined by the standard
+  schema (rfc4519.schema:42:1), and this is the same definition, word for word: a schema file adds definitions and never replaces one --
   slapd refuses this too ("Duplicate attributeType", servers/slapd/at.c and oc.c). Remove it from this file
   ```
 - **A `schema` block** holds site-local definitions in
