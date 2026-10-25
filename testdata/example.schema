@@ -1,0 +1,45 @@
+# An example site schema for authnd's tests, in OpenLDAP's .schema form.
+#
+# Written for these tests (BSD-3-Clause, as the rest of this repository).
+# Every OID is under 1.3.6.1.4.1.99999, an arc nobody is assigned: it is
+# only ever an example. It uses what published schemas use -- macros, terms
+# folded over several lines, a SUP chain -- so that the tests read it the
+# way slapd would.
+
+objectidentifier exampleRoot  1.3.6.1.4.1.99999
+objectidentifier exampleAttr  exampleRoot:1
+objectidentifier exampleClass exampleRoot:2
+
+attributetype ( exampleAttr:1 NAME 'exampleBadge'
+	DESC 'the number on a badge'
+	EQUALITY caseIgnoreMatch
+	SUBSTR caseIgnoreSubstringsMatch
+	SYNTAX 1.3.6.1.4.1.1466.115.121.1.15{64}
+	SINGLE-VALUE )
+
+attributetype ( exampleAttr:2 NAME 'exampleCampus'
+	DESC 'where somebody works'
+	EQUALITY caseIgnoreMatch
+	SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 )
+
+attributetype ( exampleAttr:3 NAME 'exampleEmployeeId'
+	DESC 'a staff number'
+	EQUALITY caseExactMatch
+	SYNTAX 1.3.6.1.4.1.1466.115.121.1.15
+	SINGLE-VALUE )
+
+objectclass ( exampleClass:1 NAME 'examplePerson' SUP top AUXILIARY
+	DESC 'anybody on a campus'
+	MAY ( exampleBadge $ exampleCampus ) )
+
+objectclass ( exampleClass:2 NAME 'exampleStaff' SUP examplePerson AUXILIARY
+	DESC 'somebody employed: has a staff number'
+	MUST exampleEmployeeId )
+
+objectclass ( exampleClass:3 NAME 'exampleGroup' SUP top AUXILIARY
+	MAY exampleCampus )
+
+objectclass ( exampleClass:4 NAME 'exampleUnit' SUP top STRUCTURAL
+	MUST cn )
+
+objectclass ( exampleClass:5 NAME 'exampleThing' SUP top ABSTRACT )

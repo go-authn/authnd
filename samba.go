@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/go-authn/directory"
-	"github.com/go-authn/ldap/schema"
 )
 
 // sambaSchema is the part of Samba's schema that publish_nt_hash needs:
@@ -19,16 +18,6 @@ import (
 //
 //go:embed samba.schema
 var sambaSchema []byte
-
-// directorySchema is the schema this server publishes and holds every entry
-// to: the standard one (go-authn/ldap's schema.Standard), with Samba's three
-// definitions added when the samba block is there.
-func directorySchema(cfg *config) (*schema.Schema, error) {
-	if cfg.Samba == nil {
-		return schema.Standard(), nil
-	}
-	return schema.Build(append(schema.StandardFiles(), schema.File{Name: "samba.schema", Data: sambaSchema})...)
-}
 
 // defaultRIDBase is Samba's default "algorithmic rid base" (smb.conf(5)),
 // and BASE_RID (0x3e8, source3/include/includes.h), below which Samba refuses

@@ -260,6 +260,155 @@ Samba's published OIDs, names, syntaxes and matching rules, not copied from
 Samba's GPL-3.0 `samba.schema`, and `sambaSamAccount`'s MAY lists only what
 authnd publishes. See the file.
 
+### Site schemas, and the auxiliary classes a source declares
+
+A French research site serves SUPANN and eduPerson attributes. Since v0.12.0
+authnd loads the schema files a site already has, and publishes the auxiliary
+classes a source's configuration **declares**:
+
+```hcl
+schema_files = ["/etc/authnd/supann.schema", "/etc/authnd/eduperson.ldif"]
+
+schema {                                   # site-local definitions, hclschema's shape
+  attribute_type "siteBadge" {
+    oid    = "1.3.6.1.4.1.99999.1.1"
+    syntax = "1.3.6.1.4.1.1466.115.121.1.15"
+  }
+  object_class "siteMember" {
+    oid  = "1.3.6.1.4.1.99999.2.1"
+    kind = "auxiliary"
+    may  = ["siteBadge"]
+  }
+}
+
+users "sql" {
+  driver           = "postgres"
+  dsn_file         = "/etc/authnd/dsn"
+  users            = "select login, secret from staff"
+  users_attributes = "select login, sn, etab as \"supannEtablissement\", civ as \"supannCivilite\" from staff"
+  object_classes       = ["supannPerson", "eduPerson"]   # declared, never inferred
+  group_object_classes = ["supannGroupe"]
+}
+user  "alice" { object_classes = ["siteMember"] ... }
+group "staff" { object_classes = ["supannGroupe"] ... }
+```
+
+- **`schema_files`** are OpenLDAP `.schema` or cn=config LDIF files, loaded
+  **as published**, in order, on top of the standard schema (and `samba.schema`
+  with the `samba` block), by go-authn/ldap's slapd-compatible readers: any term
+  order, slapd and RFC 2849 continuations, base64, `{N}` prefixes,
+  `objectidentifier` macros (one file's macros reach the next, as across slapd
+  includes). A relative path is relative to the working directory, like every
+  other path in the configuration. Each file must be a regular file of at most
+  4 MiB (go-authn/ldap's `schema.MaxFileSize`, applied while reading); it is read
+  once, at startup.
+- **A file that does not build refuses startup and `check`**, with the file
+  and the line of the definition: an unknown superclass, attribute, rule or
+  syntax, a structural class derived from an auxiliary one, an OID or a name
+  defined twice.
+- ⛔ **A file may not redefine a definition that is already there** -- the
+  standard schema's, Samba's, or an earlier file's -- **even word for word**.
+  That is slapd's rule: a schema file's definitions go through `parse_at` /
+  `parse_oc` (`servers/slapd/schemaparse.c`), and `at_insert` / `oc_insert`
+  (`at.c`, `oc.c`) answer an OID or name already there with
+  *Duplicate attributeType* (same OID and names) or *Inconsistent duplicate
+  attributeType*; only slapd's own hard-coded schema (`register_at(..., dupok)`)
+  tolerates the first. A file slapd refuses is a file authnd refuses, and the
+  refusal says whether the text was the same:
+
+  ```
+  schema_files: /etc/authnd/core-copy.schema:1: the attribute type cn (2.5.4.3) is already defined by the standard
+  schema, and this is the same definition, word for word: a schema file adds definitions and never replaces one --
+  slapd refuses this too ("Duplicate attributeType", servers/slapd/at.c and oc.c). Remove it from this file
+  ```
+- **A `schema` block** holds site-local definitions in
+  [hclschema](https://github.com/go-authn/ldap/tree/main/schema/hclschema)'s
+  shape (`attribute_type`, `object_class`, `object_identifier`,
+  `matching_rule`, `ldap_syntax`), after the files. hclschema decodes from
+  bytes; each block is handed to it as its own text at its own place in the
+  configuration file (the bytes before it blanked, line breaks kept), so the
+  **literal-only rule** -- no variables, functions, `${...}` or `%{...}` -- and
+  hclschema's bounds hold exactly as for an `.hcl` schema file, and every error
+  names the configuration's own line and column. That was preferred to a new
+  `hcl.Body` API in go-authn/ldap: one decoder instead of two entry points, the
+  byte bounds still measured on bytes, and no release to wait for.
+- **A declared class is checked at startup and by `check`** against the
+  schema served: it must be defined, **AUXILIARY** (RFC 4512 §4.1.1; an entry
+  has one structural chain, §2.4.2, which authnd chooses), and not one authnd
+  derives itself (`account`, `inetOrgPerson` and its superclasses,
+  `posixAccount`, `posixGroup`, `ldapPublicKey`, `uidObject`,
+  `sambaSamAccount`, `groupOfNames`, `organizationalRole`, under any of their
+  names). Otherwise startup is refused, naming every offending block, its
+  position and the class:
+
+  ```
+  c.hcl:7:20: user "a" object_classes: exampleUnit is STRUCTURAL, and an entry has exactly one structural chain
+  (RFC 4512 §2.4.2), which authnd chooses: only an AUXILIARY class (§4.1.1) can be declared
+  c.hcl:29:26: users "sql" group_object_classes: groupOfNames is a class authnd derives itself, from what each
+  person or group has (see `authnd check`), and a declaration cannot overrule that
+  ```
+- **Published with its superclasses** (RFC 4512 §3.3: "all superclasses of the
+  named classes SHALL be implicitly added"), after the classes authnd derives.
+  The attributes those classes allow are **kept** instead of dropped. A class
+  is never inferred from an attribute: a person whose source declares nothing
+  keeps losing the attributes no class of theirs allows.
+- ⛔ **A person (or group) missing a MUST of a declared class is published
+  without that class**, its attributes are dropped like any other attribute no
+  class allows, and both are reported. That is the rule authnd already follows
+  -- the person stays published, problems are said, nothing is changed
+  silently. Withholding the person would take them out of every search for one
+  missing attribute; publishing the class without its MUST would serve an entry
+  that fails the schema served. Which MUST is missing is `schema.Validate`'s
+  answer.
+- **Two sources declaring different classes for one group**: go-authn/directory
+  publishes the first source's list and ignores the later one, silently.
+  `check` and the startup log **say so**:
+  `group staff: the configuration file declares supannGroupe and a postgres database declares eduMember; the first is
+  published and the second is ignored (the first source that declares classes for a group decides)`.
+
+What `check` says, from the test that loads the committed example schema
+(`testdata/example.schema`, `testdata/example.ldif`, OIDs under the private arc
+1.3.6.1.4.1.99999) and a `schema` block (temporary paths shortened):
+
+```
+$ authnd check c.hcl
+ldap://127.0.0.1:0, base dc=example,dc=org
+
+schema: testdata/example.schema adds 3 object identifier macros, 3 attribute types and 5 object classes
+schema: testdata/example.ldif adds 1 attribute type and 1 object class
+schema: the schema block at c.hcl:8:1 adds 1 attribute type and 1 object class: exampleLocker and exampleLockerHolder
+c.hcl:24:20: user "ann" declares exampleStaff, exampleLockerHolder and exampleOccupant for this person
+c.hcl:35:20: user "ben" declares exampleStaff for this person
+c.hcl:44:20: group "staff" declares exampleGroup for this group
+
+USER  FROM                    CAN PROVE   PUBLISHED AS                                                                                                               WITH
+ann   the configuration file  a password  person, organizationalPerson, inetOrgPerson, uidObject, examplePerson, exampleStaff, exampleLockerHolder, exampleOccupant  uid, cn, exampleBadge, exampleEmployeeId, exampleLocker, exampleOffice and sn
+ben   the configuration file  a password  account, uidObject                                                                                                         uid
+cat   the configuration file  a password  account, uidObject                                                                                                         uid
+
+GROUP  MEMBERS      PUBLISHED AS
+staff  ann and ben  posixGroup, exampleGroup
+
+ann has no uidNumber, gidNumber or homeDirectory: not a posixAccount, published as person, organizationalPerson, inetOrgPerson, uidObject, examplePerson, exampleStaff, exampleLockerHolder, exampleOccupant
+ben has no uidNumber, gidNumber or homeDirectory: not a posixAccount, published as account, uidObject
+ben is published without exampleStaff, which its source declares: ben has no exampleEmployeeId, which exampleStaff requires
+ben is published without exampleBadge: no class of the entry allows it; examplePerson and exampleStaff would
+cat has no uidNumber, gidNumber or homeDirectory: not a posixAccount, published as account, uidObject
+cat is published without exampleBadge: no class of the entry allows it; examplePerson and exampleStaff would
+...
+this configuration can be served
+```
+
+ann's `exampleStaff` brought `examplePerson`, its superclass. ben declares
+`exampleStaff` without its MUST `exampleEmployeeId`, so he is published
+without it, and his `exampleBadge` with it. cat declares nothing, and nothing
+is inferred from her `exampleBadge`. The startup log carries the same lines,
+with DNs.
+
+Schema files are not secrets, but they decide what every entry may hold: keep
+them with the rest of the configuration, `root:authnd`, mode `0640`, in a
+directory only root writes ([docs/install.md](docs/install.md)).
+
 ## What it refuses, and why
 
 An LDAP server is asked to prove people, so the refusals are the design.
@@ -656,6 +805,12 @@ decides it. Nothing about this is a limitation of this program.
   by `go-authn/directory/ldapdir`, which is the library a file server uses. The
   identities that come out carry the NT hash SMB needs — and, with
   `publish_nt_hash` off, provably do not.
+- **RENATER's SUPANN schema**, as published, loaded by `schema_files` and
+  served from a SQLite source declaring `supannPerson`, read back by
+  `ldapsearch` (`supannEtablissement`, `supannCivilite`, `supannListeRouge`,
+  `supannEmpId`, and a filter evaluated with the file's matching rules). The
+  file is downloaded only when `LDAP_SCHEMA_NETWORK=1`, checked against its
+  recorded SHA-256, and never committed: RENATER publishes it without a licence.
 - **The NT hash the tests expect** was computed by an OpenSSL that is not this
   program (`printf 'hunter2' | iconv -t UTF-16LE | openssl md4`, with 1.1,
   since 3.x dropped MD4), and that OpenSSL was itself checked against the value

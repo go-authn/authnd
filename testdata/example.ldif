@@ -1,0 +1,10 @@
+# An example site schema for authnd's tests, in OpenLDAP's cn=config LDIF
+# form (slapd-config(5)): {N} prefixes, RFC 2849 folding. Written for these
+# tests; OIDs under 1.3.6.1.4.1.99999, an arc nobody is assigned.
+dn: cn=example-ldif,cn=schema,cn=config
+objectClass: olcSchemaConfig
+cn: example-ldif
+olcAttributeTypes: {0}( 1.3.6.1.4.1.99999.3.1 NAME 'exampleOffice' DESC 'a
+  room number' EQUALITY caseIgnoreMatch SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 )
+olcObjectClasses: {0}( 1.3.6.1.4.1.99999.4.1 NAME 'exampleOccupant' SUP top
+  AUXILIARY MAY exampleOffice )

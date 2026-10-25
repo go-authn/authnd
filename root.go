@@ -194,6 +194,14 @@ func report(cmd *cobra.Command, cfg *config) error {
 	}
 
 	fmt.Fprintf(out, "%s://%s, base %s\n\n", srv.scheme(), cfg.Listen, cfg.BaseDN)
+	// What the site added to the schema and what each source declares, before
+	// the tables whose PUBLISHED AS column shows the declared classes.
+	if lines := srv.schemaLines(); len(lines) > 0 {
+		for _, l := range lines {
+			fmt.Fprintln(out, l)
+		}
+		fmt.Fprintln(out)
+	}
 
 	// What each entry is published as comes from the entries themselves,
 	// built and validated exactly as a search builds them: a description of
@@ -415,11 +423,12 @@ func schemaReport(out io.Writer, pub publication) {
 		if e.noSID != "" {
 			lines = append(lines, fmt.Sprintf("%s is published without sambaNTPassword: %s", e.name, e.noSID))
 		}
+		what := e.name
+		if e.group {
+			what = "group " + e.name
+		}
+		lines = append(lines, leftOffLines(e, what)...)
 		for _, d := range e.dropped {
-			what := e.name
-			if e.group {
-				what = "group " + e.name
-			}
 			lines = append(lines, fmt.Sprintf("%s is published without %s: %s", what, d.name, d.why))
 		}
 	}

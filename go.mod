@@ -1,10 +1,10 @@
 module github.com/go-authn/authnd
 
-go 1.27.1
+go 1.27.3
 
 require (
 	github.com/go-asn1-ber/asn1-ber v1.5.8
-	github.com/go-authn/directory v0.14.1
+	github.com/go-authn/directory v0.15.0
 	github.com/go-authn/kdc v0.4.3
 	github.com/go-authn/ldap v0.9.0
 	github.com/go-authn/mfa v0.5.0

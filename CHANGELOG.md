@@ -3,6 +3,46 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.12.0 — 2026-10-25
+
+### ⛔ Security: built with Go 1.27.3 (GO-2026-6809)
+
+authnd verifies certificates (`x509.Certificate.Verify`, reached from
+`main` per `govulncheck`), and Go 1.27.2's crypto/x509 did not distrust the
+compromised intermediate certificates GO-2026-6809 names. v0.11.1's release
+binaries were built with 1.27.2 and are affected. The release workflow now
+builds with 1.27.3, and the `go` directive is 1.27.3, so `go install`
+switches to the fixed toolchain by itself. `govulncheck` under 1.27.3: no
+vulnerabilities.
+
+### Site schemas, and auxiliary object classes a source declares
+
+- `schema_files = [...]` loads OpenLDAP `.schema` and cn=config LDIF files as
+  published (go-authn/ldap v0.9.0's slapd-compatible readers), on top of the
+  standard schema, and serves them at `cn=Subschema`. A file that does not
+  build refuses startup and `check` with the file and the line.
+- ⛔ A file that **redefines** a definition already there -- the standard
+  schema's, Samba's, an earlier file's -- is refused, even word for word, as
+  slapd refuses it ("Duplicate attributeType", `servers/slapd/at.c`, `oc.c`).
+- `schema { ... }` holds site-local definitions in go-authn/ldap's hclschema
+  shape. Values must be literals (no `${...}`, `%{...}`, variables or
+  functions); errors name the configuration's own line and column.
+- go-authn/directory v0.15.0: `object_classes` / `group_object_classes` in
+  `users` blocks and `object_classes` in `user` and `group` blocks declare
+  auxiliary classes. Each is checked at startup and by `check`: defined,
+  AUXILIARY, and not one authnd derives itself; otherwise startup is refused,
+  naming the block, its position and the class.
+- A declared class is published with its superclasses (RFC 4512 §3.3), and the
+  attributes it allows are kept instead of dropped. A person or group missing
+  one of its MUSTs is published without it, its attributes are dropped, and
+  both are reported. Nothing is inferred: without a declaration, nothing
+  changes.
+- The startup log and `check` list the schema files and schema blocks loaded
+  (what each adds), what each source declares, the classes left off per
+  person, and **groups for which two sources declare different classes**
+  (directory publishes the first list and ignores the rest silently).
+- Schema files must be regular files of at most 4 MiB, read once at startup.
+
 ## v0.11.1 — 2026-10-18
 
 - The startup line names only the sources somebody is served from. With no

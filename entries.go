@@ -67,6 +67,10 @@ type entry struct {
 	dropped []dropped
 	// invalid is what schema.Validate said, nil for an entry that passes.
 	invalid error
+	// declared are the declared object classes the entry carries (by their
+	// schema names), and leftOff the declared ones it does not, with why.
+	declared []string
+	leftOff  []leftOff
 }
 
 // A dropped attribute is one a source gave that the entry could not carry,
@@ -106,19 +110,43 @@ func (p publication) rejected() []*entry {
 func (s *server) publish() publication {
 	var p publication
 	for _, id := range s.sorted() {
-		p.all = append(p.all, s.validated(s.personEntry(id)))
+		e := s.personEntry(id, nil)
+		if off, skip := s.unmet(e); len(off) > 0 {
+			e = s.personEntry(id, skip)
+			e.leftOff = append(e.leftOff, off...)
+		}
+		p.all = append(p.all, s.validated(e))
 	}
 	for _, name := range s.groupNames() {
-		e, err := s.groupEntry(name)
+		e, err := s.groupEntry(name, nil)
 		if err != nil {
 			// A source that cannot answer for a group: it is left out, as it
 			// was before, and `check` says so from its own question.
 			continue
 		}
+		if off, skip := s.unmet(e); len(off) > 0 {
+			if e, err = s.groupEntry(name, skip); err != nil {
+				continue
+			}
+			e.leftOff = append(e.leftOff, off...)
+		}
 		p.all = append(p.all, s.validated(e))
 	}
 	return p
 }
+
+// ⛔ A person or group missing a MUST of a declared class is published
+// WITHOUT that class, and its attributes are then dropped like any other
+// attribute no class of the entry allows; both are reported. That is the
+// rule this file already follows: the person stays published, problems are
+// said at startup and by `check`, and nothing is changed silently. The other
+// two choices break it -- withholding the person takes them out of every
+// search for one missing optional-looking attribute (supannPerson has no
+// MUST, but a site class may), and publishing the class without its MUST is
+// an entry that fails the schema this server serves. Which MUSTs are missing
+// is schema.Validate's answer (unmet), and the entry is built again without
+// the class rather than edited, so the rebuilt entry is the one Validate is
+// asked about.
 
 // validated is e with what Validate says about it, after dropping the given
 // attributes no class of the entry allows.
@@ -190,8 +218,9 @@ func (s *server) whyNotAllowed(desc string) string {
 // homeDirectory ).
 var posixMust = []string{"uidNumber", "gidNumber", "homeDirectory"}
 
-// personEntry is the entry for one person.
-func (s *server) personEntry(id *directory.Identity) *entry {
+// personEntry is the entry for one person, with the classes their source
+// declares that are not in skip.
+func (s *server) personEntry(id *directory.Identity, skip map[string]bool) *entry {
 	attrs := id.Attributes()
 	e := &entry{name: id.Name()}
 
@@ -238,6 +267,10 @@ func (s *server) personEntry(id *directory.Identity) *entry {
 	// uidObject (RFC 4519 §3.14, AUXILIARY, MUST uid) on every person, so
 	// one class finds all of them whatever their structural class.
 	classes = append(classes, "uidObject")
+	// The auxiliary classes the person's source declares, last: checked at
+	// startup (declared.go), each with its superclasses.
+	classes, e.declared = s.withDeclared(classes, id.ObjectClasses(), skip)
+	e.leftOff = s.undeclared(id.ObjectClasses())
 	e.shape = classes
 
 	list := []*ldap.Attribute{
@@ -292,12 +325,16 @@ func (s *server) personEntry(id *directory.Identity) *entry {
 //     class whose only MUST is cn and whose occupants (roleOccupant, DNs)
 //     are optional -- a set that may be empty, which is what this group is.
 //     It takes description, ou and seeAlso, as groupOfNames does.
-func (s *server) groupEntry(name string) (*entry, error) {
+func (s *server) groupEntry(name string, skip map[string]bool) (*entry, error) {
 	members, err := s.dir.Members(name)
 	if err != nil {
 		return nil, err
 	}
 	attrs, err := s.dir.GroupAttributes(name)
+	if err != nil && !errors.Is(err, directory.ErrNoSuchGroup) {
+		return nil, err
+	}
+	declared, err := s.dir.GroupObjectClasses(name)
 	if err != nil && !errors.Is(err, directory.ErrNoSuchGroup) {
 		return nil, err
 	}
@@ -311,9 +348,11 @@ func (s *server) groupEntry(name string) (*entry, error) {
 	default:
 		class = "organizationalRole"
 	}
-	e.shape = []string{class}
+	classes, added := s.withDeclared([]string{class}, declared.Names(), skip)
+	e.shape, e.declared = classes, added
+	e.leftOff = s.undeclared(declared.Names())
 	list := []*ldap.Attribute{
-		ldap.StringAttribute("objectClass", "top", class),
+		ldap.StringAttribute("objectClass", append([]string{"top"}, classes...)...),
 		ldap.StringAttribute("cn", name),
 	}
 	e.given = map[string]bool{}

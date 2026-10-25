@@ -30,6 +30,17 @@ type config struct {
 	// declares somebody: the parsed struct says a person exists, not where
 	// the sentence about them lives.
 	files []string
+	// sources are those files' bytes, by name, as they were parsed: a schema
+	// block is decoded by go-authn/ldap's hclschema from its own text, at its
+	// own place in its file (see siteschema.go).
+	sources map[string][]byte
+
+	// SchemaFiles are OpenLDAP .schema or cn=config LDIF files, loaded as
+	// published ON TOP of the standard schema, in order. Schemas are the
+	// schema blocks: site-local definitions in hclschema's shape. See
+	// siteschema.go.
+	SchemaFiles []string      `hcl:"schema_files,optional"`
+	Schemas     []schemaBlock `hcl:"schema,block"`
 
 	// Listen is where to answer. The default is loopback, because a
 	// directory that appears on every interface the moment it starts is a
@@ -187,6 +198,7 @@ func loadConfig(paths []string) (*config, error) {
 	}
 	parser := hclparse.NewParser()
 	var bodies []hcl.Body
+	cfg := &config{sources: map[string][]byte{}}
 	for _, f := range files {
 		src, err := os.ReadFile(f)
 		if err != nil {
@@ -197,8 +209,8 @@ func loadConfig(paths []string) (*config, error) {
 			return nil, diags
 		}
 		bodies = append(bodies, file.Body)
+		cfg.sources[f] = src
 	}
-	cfg := &config{}
 	if diags := gohcl.DecodeBody(hcl.MergeBodies(bodies), nil, cfg); diags.HasErrors() {
 		return nil, diags
 	}
