@@ -614,6 +614,37 @@ func TestAClassNobodyCheckedIsLeftOff(t *testing.T) {
 	contains(t, strings.Join(leftOffLines(ann, "ann"), "\n"), "ann is published without exampleOccupant: the class was not checked at startup")
 }
 
+// locate, on any file the reader accepts, points at a line of the file whose
+// record holds the definition: reading the file from that line on, alone,
+// yields that definition first among its kind.
+func FuzzLocate(f *testing.F) {
+	f.Add([]byte("objectidentifier a 1.3.6.1.4.1.99999\nattributetype ( a:1 NAME 'x'\n  SYNTAX 1.3.6.1.4.1.1466.115.121.1.15 )\n" +
+		"# c\nobjectclass ( a:2 NAME 'y' SUP top AUXILIARY MAY x )\n"))
+	f.Add([]byte("dn: cn=x\nolcAttributeTypes: {0}( 1.1.1 NAME 'x'\n  SYNTAX 1.1 )\nolcObjectClasses: ( 1.1.2 NAME 'y' )\n"))
+	f.Add([]byte("attributetype ( 1.1.1 NAME 'x' \\\r\nSYNTAX 1.1 )\r\n\r\nattributetype ( 1.1.2 NAME 'z' SYNTAX 1.1 )\r\n"))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		if len(data) > 1<<14 || strings.Contains(string(data), "objectidentifier") {
+			return // macros make a suffix unreadable alone; covered by the seeds' whole-file reads
+		}
+		file := schema.File{Name: "f", Data: data}
+		d, err := schema.Read(file)
+		if err != nil {
+			return
+		}
+		lines := strings.Split(string(data), "\n")
+		for i, x := range d.AttributeTypes {
+			line := locate(nil, file, culprit{kind: "attribute type", index: i})
+			if line < 1 || line > len(lines) {
+				t.Fatalf("attribute type %d (%s) located at line %d of %d", i, x.Name(), line, len(lines))
+			}
+			rest, err := schema.Read(schema.File{Name: "f", Data: []byte(strings.Join(lines[line-1:], "\n"))})
+			if err != nil || len(rest.AttributeTypes) == 0 || rest.AttributeTypes[0].String() != x.String() {
+				t.Fatalf("attribute type %d (%s) located at line %d, where the file reads otherwise (%v)", i, x.Name(), line, err)
+			}
+		}
+	})
+}
+
 // The pieces that only have one caller each, at their edges.
 func TestSiteSchemaHelpers(t *testing.T) {
 	if got := describeAddition(&schema.Definitions{}); got != "nothing" {
