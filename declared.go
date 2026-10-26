@@ -171,7 +171,7 @@ func (s *server) withDeclared(classes, declared []string, skip map[string]bool) 
 	}
 	for _, n := range declared {
 		oc := s.declared[strings.ToLower(n)]
-		if oc == nil || skip[strings.ToLower(oc.Name())] || slices.Contains(added, oc.Name()) {
+		if oc == nil || skipped(oc, skip) || slices.Contains(added, oc.Name()) {
 			continue
 		}
 		walk(oc)
@@ -180,21 +180,56 @@ func (s *server) withDeclared(classes, declared []string, skip map[string]bool) 
 	return out, added
 }
 
-// A leftOff is a declared class an entry is published without, and why.
+// A leftOff is a class an entry is published without, and why: a declared
+// class whose MUST is missing, or an auxiliary class -- declared or derived
+// -- that the DIT content rule of the entry's structural class does not
+// allow.
 type leftOff struct {
 	class   string
 	missing []string
+	// rule is the DIT content rule whose AUX does not list the class.
+	rule string
 }
 
-// unmet is the declared classes of e whose MUST attributes e does not have
-// -- read off schema.Validate's MissingRequired problems, so that the
-// reading of MUST that decides is Validate's, as in validated.
+// unmet is the classes e must be published without: the declared classes
+// whose MUST attributes e does not have, and the auxiliary classes the DIT
+// content rule of its structural class does not list in AUX -- read off
+// schema.Validate's MissingRequired and AuxiliaryNotAllowed problems, so
+// that the reading of the schema that decides is Validate's, as in
+// validated.
+//
+// ⛔ A class the content rule does not allow is LEFT OFF, as a declared
+// class missing a MUST is, and for the same reason: the person stays
+// published, with what the rule allows, and both are said. The attributes
+// only that class allowed are then dropped by validated like any other
+// attribute no class of the entry allows, and the ones authnd derives for
+// it (sshPublicKey for ldapPublicKey, sambaSID and sambaNTPassword for
+// sambaSamAccount) are not added (personEntry). Withholding the whole person
+// for a class the site's rule does not want is the other choice, and it
+// takes them out of every search for something they did not choose.
 func (s *server) unmet(e *entry) (off []leftOff, skip map[string]bool) {
 	var v *schema.ValidationError
 	if !errors.As(e.Validate(s.schema), &v) {
 		return nil, nil
 	}
 	skip = map[string]bool{}
+	for _, p := range v.Problems {
+		if p.Kind != schema.AuxiliaryNotAllowed {
+			continue
+		}
+		oc := s.schema.ObjectClass(p.Class)
+		if oc == nil || skip[strings.ToLower(oc.Name())] {
+			continue
+		}
+		rule := ""
+		if st := structuralOf(s.schema, e.shape); st != nil {
+			if r := s.schema.DITContentRuleOf(st); r != nil {
+				rule = r.Name()
+			}
+		}
+		off = append(off, leftOff{class: oc.Name(), rule: rule})
+		skip[strings.ToLower(oc.Name())] = true
+	}
 	for _, name := range e.declared {
 		oc := s.schema.ObjectClass(name)
 		var missing []string
@@ -203,12 +238,33 @@ func (s *server) unmet(e *entry) (off []leftOff, skip map[string]bool) {
 				missing = append(missing, p.Attribute)
 			}
 		}
-		if len(missing) > 0 {
+		if len(missing) > 0 && !skip[strings.ToLower(oc.Name())] {
 			off = append(off, leftOff{class: oc.Name(), missing: missing})
 			skip[strings.ToLower(oc.Name())] = true
 		}
 	}
 	return off, skip
+}
+
+// structuralOf is the most subordinate structural class of an entry's
+// chain, which is the one its DIT content rule is for (RFC 4512 §4.1.6).
+func structuralOf(s *schema.Schema, shape []string) *schema.ObjectClass {
+	var leaf *schema.ObjectClass
+	for _, n := range shape {
+		if oc := s.ObjectClass(n); oc != nil && oc.Kind == schema.Structural && (leaf == nil || oc.IsA(leaf)) {
+			leaf = oc
+		}
+	}
+	return leaf
+}
+
+// skipped reports whether a class, or one of its superclasses, is in skip:
+// a class whose superclass is left off goes too (RFC 4512 §3.3).
+func skipped(oc *schema.ObjectClass, skip map[string]bool) bool {
+	if skip[strings.ToLower(oc.Name())] {
+		return true
+	}
+	return slices.ContainsFunc(oc.Superiors(), func(sup *schema.ObjectClass) bool { return skipped(sup, skip) })
 }
 
 // undeclared is the classes a source handed out that were not checked at
@@ -230,6 +286,10 @@ func (s *server) undeclared(names []string) []leftOff {
 func leftOffLines(e *entry, what string) []string {
 	var out []string
 	for _, l := range e.leftOff {
+		if l.rule != "" {
+			out = append(out, fmt.Sprintf("%s is published without %s: the DIT content rule %s does not allow it (not in its AUX)", what, l.class, l.rule))
+			continue
+		}
 		if len(l.missing) == 0 {
 			out = append(out, fmt.Sprintf("%s is published without %s: the class was not checked at startup", what, l.class))
 			continue

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/go-authn/ldap/schema"
@@ -269,6 +270,9 @@ func since(all, before *schema.Definitions) *schema.Definitions {
 		MatchingRules:     all.MatchingRules[len(before.MatchingRules):],
 		AttributeTypes:    all.AttributeTypes[len(before.AttributeTypes):],
 		ObjectClasses:     all.ObjectClasses[len(before.ObjectClasses):],
+		DITContentRules:   all.DITContentRules[len(before.DITContentRules):],
+		NameForms:         all.NameForms[len(before.NameForms):],
+		DITStructureRules: all.DITStructureRules[len(before.DITStructureRules):],
 	}
 }
 
@@ -305,6 +309,17 @@ func (o owners) add(d *schema.Definitions, where string) {
 	}
 	for _, x := range d.ObjectClasses {
 		put("object class", x.OID, x.Names, x)
+	}
+	// The kinds as schema.Element names them, which is how refusal looks
+	// them up. A structure rule's "OID" is its rule ID.
+	for _, x := range d.DITContentRules {
+		put("DIT content rule", x.OID, x.Names, x)
+	}
+	for _, x := range d.NameForms {
+		put("name form", x.OID, x.Names, x)
+	}
+	for _, x := range d.DITStructureRules {
+		put("DIT structure rule", strconv.Itoa(x.ID), x.Names, x)
 	}
 }
 
@@ -360,9 +375,20 @@ func refusal(err error, mine *schema.Definitions, o owners, where string) string
 		same = "the same definition, word for word"
 	}
 	return fmt.Sprintf("%s: the %s %s (%s) is already defined by %s, and this is %s: "+
-		"a schema file adds definitions and never replaces one -- slapd refuses this too "+
-		"(\"Duplicate %s\", servers/slapd/at.c and oc.c). Remove it from this file",
-		at, be.Element, name, be.OID, first, same, slapdKind(be.Element.String()))
+		"a schema file adds definitions and never replaces one -- %s. Remove it from this file",
+		at, be.Element, name, be.OID, first, same, slapdSays(be.Element))
+}
+
+// slapdSays is slapd's own refusal of a redefinition, for the kinds slapd has.
+func slapdSays(el schema.Element) string {
+	switch el {
+	case schema.ElementNameForm, schema.ElementDITStructureRule:
+		// slapd.conf(5) and slapd-config(5) have no directive for either.
+		return "slapd has no " + el.String() + "s, and this server holds them to the rule slapd applies to the others"
+	case schema.ElementDITContentRule:
+		return `slapd refuses this too ("Duplicate Content Rule", servers/slapd/cr.c and schemaparse.c)`
+	}
+	return fmt.Sprintf(`slapd refuses this too ("Duplicate %s", servers/slapd/at.c and oc.c)`, slapdKind(el.String()))
 }
 
 // definitionAt is the definition of d a BuildError is about: the one of its
@@ -391,6 +417,24 @@ func definitionAt(d *schema.Definitions, be *schema.BuildError) fmt.Stringer {
 	case schema.ElementObjectClass:
 		for _, x := range d.ObjectClasses {
 			if match(x.OID, x.Pos) {
+				return x
+			}
+		}
+	case schema.ElementDITContentRule:
+		for _, x := range d.DITContentRules {
+			if match(x.OID, x.Pos) {
+				return x
+			}
+		}
+	case schema.ElementNameForm:
+		for _, x := range d.NameForms {
+			if match(x.OID, x.Pos) {
+				return x
+			}
+		}
+	case schema.ElementDITStructureRule:
+		for _, x := range d.DITStructureRules {
+			if match(strconv.Itoa(x.ID), x.Pos) {
 				return x
 			}
 		}
@@ -423,6 +467,9 @@ func describeAddition(d *schema.Definitions) string {
 		{len(d.MatchingRules), "matching rule", "matching rules"},
 		{len(d.AttributeTypes), "attribute type", "attribute types"},
 		{len(d.ObjectClasses), "object class", "object classes"},
+		{len(d.DITContentRules), "DIT content rule", "DIT content rules"},
+		{len(d.NameForms), "name form", "name forms"},
+		{len(d.DITStructureRules), "DIT structure rule", "DIT structure rules"},
 	} {
 		if p.n > 0 {
 			parts = append(parts, fmt.Sprintf("%d %s", p.n, plural(p.n, p.one, p.plural)))
@@ -441,6 +488,15 @@ func namesOf(d *schema.Definitions) []string {
 		out = append(out, x.Name())
 	}
 	for _, x := range d.ObjectClasses {
+		out = append(out, x.Name())
+	}
+	for _, x := range d.DITContentRules {
+		out = append(out, x.Name())
+	}
+	for _, x := range d.NameForms {
+		out = append(out, x.Name())
+	}
+	for _, x := range d.DITStructureRules {
 		out = append(out, x.Name())
 	}
 	return out
