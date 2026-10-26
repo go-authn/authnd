@@ -3,6 +3,19 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.12.2 — 2026-10-26
+
+### Release binaries keep their symbol table
+
+Release binaries are linked with `-ldflags="-w"` instead of `-s -w`. Per
+`go doc cmd/link`, `-s` omits the symbol table and debug information, `-w`
+only the DWARF symbol table. With the symbol table stripped,
+`govulncheck -mode binary` cannot tell which functions are present and falls
+back to module level, reporting vulnerabilities in code that is not linked
+(a false positive: GO-2026-5932, x/crypto/openpgp). With it kept, the scan is
+precise. Cost, measured on darwin/arm64 with go1.27.3: 18.8 MB to 20.5 MB
+(+9%).
+
 ## v0.12.1 — 2026-10-25
 
 ### Schema refusals come from go-authn/ldap's typed BuildError
