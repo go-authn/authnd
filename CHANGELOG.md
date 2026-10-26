@@ -3,6 +3,21 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.12.3 — 2026-10-26
+
+### Schema loading no longer stalls on a huge schema file (denial of service)
+
+`schema_files` are read at startup with `schema.Read` from
+`github.com/go-authn/ldap`. Up to v0.10.0 that parser was quadratic on
+continuation lines: a 4 MiB schema file of short continuation lines took about
+three minutes (139.6 GB allocated for 1 MiB), so a hostile or oversized schema
+file stalled startup. authnd now builds with `ldap` v0.10.1, where `Read` is
+linear, no longer copies and splits the whole file to inspect its first line,
+and the strict parser is about 2.6x faster (147 allocations instead of 498 on
+`cosine.schema`, measured on a loaded machine). `schema.Format` also folds
+lines over 2000 bytes, which slapd and `Read` refuse. Upgrade if you load
+schema files you do not control.
+
 ## v0.12.2 — 2026-10-26
 
 ### Release binaries keep their symbol table
