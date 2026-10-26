@@ -24,10 +24,8 @@ github.com/go-authn/directory v0.15.0 h1:lH6Vfd8ZEJraopuItl+nQXUh0u2monEvYlgjdSl
 github.com/go-authn/directory v0.15.0/go.mod h1:qu8CHyq9wPcbNtkWh/cvpA53rH8UVwh0HA4dXFh33JI=
 github.com/go-authn/kdc v0.4.3 h1:JvnhhXEXQfFz+7NR//aSCw3aCER6XAaJWAtrXDM+dCk=
 github.com/go-authn/kdc v0.4.3/go.mod h1:R5aBTSi1WQP16Sa+/PJqUyNHtfYi0BTGEza43Z5T/88=
-github.com/go-authn/ldap v0.10.1 h1:rSo+UHfVtU1t/lRz34Mo+e318k67S6RvFwNakNfvb4A=
-github.com/go-authn/ldap v0.10.1/go.mod h1:MpNA4Exo82+G02Dsiwwe1+Vp1/D+A2pxIEOffKebLvM=
-github.com/go-authn/ldap v0.10.2 h1:z2Wh27372hYmAsSHor1KqyGjDd8FMdeUX+Ifn9fhSUQ=
-github.com/go-authn/ldap v0.10.2/go.mod h1:MpNA4Exo82+G02Dsiwwe1+Vp1/D+A2pxIEOffKebLvM=
+github.com/go-authn/ldap v0.11.0 h1:/Pbui8PBLOLZI6trJJg+p/twg4JAbLr1X65sqWVoFSY=
+github.com/go-authn/ldap v0.11.0/go.mod h1:MpNA4Exo82+G02Dsiwwe1+Vp1/D+A2pxIEOffKebLvM=
 github.com/go-authn/mfa v0.5.0 h1:9HkcmhBmoTIS+2yD6gvtFMPzi19tjuElEdBXXXBLwuo=
 github.com/go-authn/mfa v0.5.0/go.mod h1:gXW2ygHUIq0dbkDK5ZwtngATc2cSpTuszcin6KAqjWA=
 github.com/go-authn/oidc v0.4.2 h1:sTcoLgpH4jaNhkQ5MwkmTRLI1Iwi1cGPyGunkMnZqiQ=

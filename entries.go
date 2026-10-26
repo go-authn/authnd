@@ -115,7 +115,7 @@ func (s *server) publish() publication {
 			e = s.personEntry(id, skip)
 			e.leftOff = append(e.leftOff, off...)
 		}
-		p.all = append(p.all, s.validated(e))
+		p.all = append(p.all, s.placedAndValidated(e))
 	}
 	for _, name := range s.groupNames() {
 		e, err := s.groupEntry(name, nil)
@@ -130,9 +130,16 @@ func (s *server) publish() publication {
 			}
 			e.leftOff = append(e.leftOff, off...)
 		}
-		p.all = append(p.all, s.validated(e))
+		p.all = append(p.all, s.placedAndValidated(e))
 	}
 	return p
+}
+
+// placedAndValidated is validated, then the structure rules (structure.go).
+func (s *server) placedAndValidated(e *entry) *entry {
+	e = s.validated(e)
+	s.placed(e)
+	return e
 }
 
 // ⛔ A person or group missing a MUST of a declared class is published
@@ -167,8 +174,16 @@ func (s *server) validated(e *entry) *entry {
 	if errors.As(err, &v) {
 		drop := map[string]string{}
 		for _, p := range v.Problems {
-			if (p.Kind == schema.NotAllowed || p.Kind == schema.UnknownAttribute) && e.given[p.Attribute] {
+			switch {
+			case (p.Kind == schema.NotAllowed || p.Kind == schema.UnknownAttribute) && e.given[p.Attribute]:
 				drop[p.Attribute] = s.whyNotAllowed(p.Attribute)
+			case p.Kind == schema.Precluded:
+				// The site's DIT content rule says this entry may not carry
+				// it (RFC 4512 §4.1.6, NOT): dropped whoever gave it, a
+				// source or authnd. Build has made sure NOT names no type a
+				// class of the rule requires, so dropping it cannot break a
+				// MUST; Validate is asked again all the same.
+				drop[p.Attribute] = "the DIT content rule " + p.Class + " precludes it (NOT)"
 			}
 		}
 		if len(drop) > 0 {
@@ -240,10 +255,16 @@ func (s *server) personEntry(id *directory.Identity, skip map[string]bool) *entr
 			e.missingPosix = append(e.missingPosix, m)
 		}
 	}
-	if len(e.missingPosix) == 0 {
+	// skip also holds the derived auxiliary classes a DIT content rule does
+	// not allow (unmet): left off, with what authnd derives for them.
+	off := func(class string) bool { return skip[strings.ToLower(class)] }
+	if len(e.missingPosix) == 0 && !off("posixAccount") {
 		classes = append(classes, "posixAccount")
 	}
 	keys := id.Keys()
+	if off("ldapPublicKey") {
+		keys = nil
+	}
 	if len(keys) > 0 {
 		// openssh-lpk upstream (as go-authn/ldap embeds it): AUXILIARY,
 		// MAY ( sshPublicKey $ uid ), and the only class that allows
@@ -251,7 +272,7 @@ func (s *server) personEntry(id *directory.Identity, skip map[string]bool) *entr
 		classes = append(classes, "ldapPublicKey")
 	}
 	var ntValue, sid string
-	if s.cfg.PublishNTHash {
+	if s.cfg.PublishNTHash && !off("sambaSamAccount") {
 		if key, err := id.NTKey(); err == nil {
 			// ⛔ Published only when asked for, because it IS the
 			// credential: whoever holds MD4(UTF16LE(password))
@@ -266,7 +287,9 @@ func (s *server) personEntry(id *directory.Identity, skip map[string]bool) *entr
 	}
 	// uidObject (RFC 4519 §3.14, AUXILIARY, MUST uid) on every person, so
 	// one class finds all of them whatever their structural class.
-	classes = append(classes, "uidObject")
+	if !off("uidObject") {
+		classes = append(classes, "uidObject")
+	}
 	// The auxiliary classes the person's source declares, last: checked at
 	// startup (declared.go), each with its superclasses.
 	classes, e.declared = s.withDeclared(classes, id.ObjectClasses(), skip)

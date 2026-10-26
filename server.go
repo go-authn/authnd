@@ -56,6 +56,9 @@ type server struct {
 	readerSecrets map[string][]byte
 
 	peopleDN, groupsDN string
+	// tree is the structure rules of the two containers, nil when the
+	// schema has no active DIT structure rule (structure.go).
+	tree *tree
 
 	// schema is what this server publishes at cn=Subschema and holds every
 	// entry it publishes to: go-authn/ldap's standard schema, with Samba's
@@ -111,6 +114,10 @@ func open(cfg *config, out io.Writer) (*server, error) {
 	// Before any source is opened: a declared class the schema refuses is a
 	// configuration error, and finding it should not wait on a database.
 	if err := s.checkDeclared(); err != nil {
+		return nil, err
+	}
+	// The tree is configuration too (structure.go): before any source.
+	if err := s.checkStructure(); err != nil {
 		return nil, err
 	}
 	if m := cfg.MFA; m != nil {

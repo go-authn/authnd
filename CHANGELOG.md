@@ -3,6 +3,62 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.13.0 — 2026-10-26
+
+### DIT content rules, name forms and DIT structure rules, enforced
+
+authnd builds with `ldap` v0.11.0, which reads, builds and enforces the three
+kinds of definition RFC 4512 §4.1.6 and §4.1.7 define. `schema_files` (the
+`.schema` keywords `ditcontentrule`, `nameform`, `ditstructurerule`, and the
+LDIF attributes `olcDitContentRules`, `dITContentRules`, `nameForms`,
+`dITStructureRules`) and `schema {}` blocks (`dit_content_rule`, `name_form`,
+`dit_structure_rule`) accept them. A file that redefines one is refused, even
+word for word, as for every other definition. `cn=Subschema` publishes them.
+
+**Content rules shape each entry** (data), for the entry's structural class:
+
+- an auxiliary class the rule's AUX does not list -- declared, or one authnd
+  derives (posixAccount, ldapPublicKey, sambaSamAccount, uidObject) -- is left
+  off that entry, with the attributes only it allowed (and the sshPublicKey,
+  sambaSID and sambaNTPassword authnd would add for it); a declared class
+  whose superclass is left off goes too;
+- an attribute the rule's NOT names is dropped, whoever gave it;
+- a type the rule's MUST names that the entry lacks leaves the entry out: the
+  rule applies to the entry as a whole.
+
+Each is said at startup and by `check`. Without a content rule, auxiliary
+classes are allowed, as slapd allows them.
+
+**Structure rules hold the tree** (configuration). With at least one active
+DIT structure rule, authnd walks its tree at startup and in `check`: the
+suffix (`base_dn`, given the class its RDN names: dc a domain, o an
+organization, ou an organizationalUnit, c a country, l a locality),
+`ou=people` and `ou=groups` (organizationalUnits), and the RDN attribute it
+names people (`uid`) and groups (`cn`) by. A container no rule places, a
+suffix of another kind, a name form that refuses `uid` or `cn`, or a container
+under which nothing authnd publishes could be placed **refuses startup**,
+naming the DN, the rule or name form, and the clause. A person or group whose
+structural class -- which depends on its data, an `sn`, a `gidNumber` -- has
+no rule under its container is left out and said. With no active structure
+rule, nothing changes.
+
+### Breaking
+
+- None for a schema without rules: a configuration that started on v0.12.4
+  could not hold a content rule, name form or structure rule (v0.12.4 refused
+  all three), so its schema and its entries are the same here. The one
+  exception: a `schema {}` block string that is not valid UTF-8 (an overlong
+  encoding HCL lets through) started on v0.12.4 and is now refused, because it
+  could not be published as it was written.
+
+### Performance
+
+Publishing 10,000 accounts makes 416 allocations per entry with the rules of
+`testdata/rules.schema` against 265 without (`BenchmarkPublish10k`; this
+includes dropping a precluded description and validating again). The times,
+192 ms against 118 ms, were measured at a load of 8 to 14 and are not a ratio
+to trust.
+
 ## v0.12.4 — 2026-10-26
 
 ### cn=Subschema: no page-layout whitespace inside RFC 2307 DESC values
