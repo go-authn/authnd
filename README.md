@@ -134,8 +134,9 @@ Why these choices:
   takes `description`, `ou` and `seeAlso` as `groupOfNames` does.
 - **Auxiliary classes without DIT content rules.** RFC 4512 §2.4.3 forbids
   auxiliary classes on an entry whose structural class has no DIT content rule.
-  Every directory server in use allows them anyway, and so does `Validate`
-  (go-authn/ldap says so).
+  slapd allows them anyway, and so does `Validate` (go-authn/ldap says so).
+  When a site schema has a content rule, see
+  [DIT content rules, name forms and structure rules](#dit-content-rules-name-forms-and-structure-rules).
 
 The schema is served: the root DSE carries `subschemaSubentry: cn=Subschema`,
 the library answers a base search of `cn=Subschema`, and filters are evaluated
@@ -415,6 +416,47 @@ with DNs.
 Schema files are not secrets, but they decide what every entry may hold: keep
 them with the rest of the configuration, `root:authnd`, mode `0640`, in a
 directory only root writes ([docs/install.md](docs/install.md)).
+
+### DIT content rules, name forms and structure rules
+
+`schema_files` and `schema` blocks may hold the three kinds of definition
+RFC 4512 §4.1.6 and §4.1.7 define (`ditcontentrule`, `nameform`,
+`ditstructurerule`, or `dit_content_rule`, `name_form`, `dit_structure_rule`
+in a block; slapd has a directive for the first only). They are published at
+`cn=Subschema`, held to the redefinition rule above, and enforced:
+
+- **A DIT content rule shapes each entry** of its structural class. An
+  auxiliary class not in its AUX is left off that entry -- a declared one, or
+  one authnd derives: posixAccount, ldapPublicKey (and its sshPublicKey),
+  sambaSamAccount (and sambaSID, sambaNTPassword), uidObject -- like a
+  declared class missing a MUST. An attribute in its NOT is dropped. A type in
+  its MUST that the entry lacks leaves the entry out, since no class can be
+  left off to fix it. All of it is said at startup and by `check`:
+
+  ```
+  uid=alice,ou=people,dc=example,dc=org is published without ldapPublicKey: the DIT content rule exampleAccountRule does not allow it (not in its AUX)
+  uid=carol,ou=people,dc=example,dc=org is NOT published: it fails the schema: telephoneNumber is required by the DIT content rule examplePersonRule and is missing (RFC 4512 4.1.6)
+  ```
+
+- ⛔ **Structure rules hold the tree, which is configuration**: with one
+  active DIT structure rule, the suffix (given the class its RDN names: dc a
+  domain, o an organization, ou an organizationalUnit, c a country, l a
+  locality), `ou=people` and `ou=groups` (organizationalUnits), and the RDN
+  attributes authnd names people (`uid`) and groups (`cn`) by are checked
+  from the root down, with go-authn/ldap's `GoverningStructureRule`. A tree
+  the rules do not allow **refuses startup and `check`**:
+
+  ```
+  DIT structure rules: authnd names its people uid=<name>,ou=people,dc=example,dc=org, and an account named so is refused: the RDN (uid) is allowed by the name form of no DIT structure rule that places account under an entry governed by the rule 2: accountByCN needs cn
+  ```
+
+  A person or group whose structural class -- which comes from its data: an
+  `sn` makes an inetOrgPerson, a `gidNumber` a posixGroup -- no rule places
+  under its container is left out and said. An RDN the data makes different
+  (a name holding `+`) never reaches the rules: Validate already refuses an
+  entry whose RDN is not its own value. With no active structure rule,
+  nothing changes. [`testdata/rules.schema`](testdata/rules.schema) is a
+  complete example for this tree.
 
 ## What it refuses, and why
 

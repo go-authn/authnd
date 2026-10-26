@@ -243,6 +243,78 @@ group "described" {
 	}
 }
 
+// A declared class whose superclass the content rule does not allow is left
+// off with it (RFC 4512 §3.3 wants every superclass listed), and both are
+// said.
+func TestADeclaredClassGoesWithItsSuperclass(t *testing.T) {
+	body := rulesConfig(t, "dc=example,dc=org") + `
+schema {
+  object_class "siteBase" {
+    oid  = "1.3.6.1.4.1.99999.8.1"
+    kind = "auxiliary"
+  }
+  object_class "siteExtra" {
+    oid  = "1.3.6.1.4.1.99999.8.2"
+    sup  = ["siteBase"]
+    kind = "auxiliary"
+  }
+  dit_content_rule "accountRule" {
+    oid = "0.9.2342.19200300.100.4.5"
+    aux = ["posixAccount", "uidObject", "ldapPublicKey", "siteExtra"]
+  }
+}
+user "dan" {
+  password       = "x"
+  object_classes = ["siteExtra"]
+}
+`
+	dan := entryOf(t, publishedFor(t, body), "dan", false)
+	if dan.invalid != nil {
+		t.Fatalf("dan: %v", dan.invalid)
+	}
+	if got := strings.Join(attrValues(dan, "objectClass"), " "); got != "top account uidObject" {
+		t.Errorf("dan's objectClass is %q", got)
+	}
+	lines := strings.Join(leftOffLines(dan, "dan"), "\n")
+	contains(t, lines,
+		"dan is published without siteBase: the DIT content rule accountRule does not allow it (not in its AUX)",
+		"dan is published without siteExtra: its superclass siteBase is not allowed by the DIT content rule accountRule (not in its AUX)")
+}
+
+// A content rule or a structure rule redefined by a later file is refused
+// as any definition is, with what slapd says of the kind.
+func TestRedefinedRulesOfEachKind(t *testing.T) {
+	dir := t.TempDir()
+	rules := testdataPath(t, "rules.schema")
+	for _, c := range []struct{ text, says string }{
+		{"ditcontentrule ( 0.9.2342.19200300.100.4.5 NAME 'other' )\n",
+			`the DIT content rule other (0.9.2342.19200300.100.4.5) is already defined by ` + rules + `:10:1, and this is a different definition: ` +
+				`a schema file adds definitions and never replaces one -- slapd refuses this too ("Duplicate Content Rule"`},
+		{"ditstructurerule ( 3 NAME 'exampleAccounts' FORM exampleAccountForm SUP 2 )\n",
+			"the DIT structure rule exampleAccounts (3) is already defined by " + rules + ":30:1, and this is the same definition, word for word: " +
+				"a schema file adds definitions and never replaces one -- slapd has no DIT structure rules"},
+	} {
+		again := hclPath(write(t, dir, "again.schema", c.text))
+		_, err := openBody(t, rulesConfig(t, "dc=example,dc=org", rules, again))
+		if err == nil || !strings.Contains(err.Error(), c.says) {
+			t.Errorf("%q: %v\nwant %q", c.text, err, c.says)
+		}
+	}
+}
+
+func TestStructureHelpers(t *testing.T) {
+	srv, err := openBody(t, rulesConfig(t, "dc=example,dc=org"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.containerClass("not a DN"); err == nil || !strings.Contains(err.Error(), `base_dn "not a DN" is not a DN`) {
+		t.Errorf("%v", err)
+	}
+	if article("domain") != "a" || article("organization") != "an" {
+		t.Error("article")
+	}
+}
+
 // The rules as a client sees them: served at cn=Subschema, and the tree
 // they shape, read by OpenLDAP's own client.
 func TestTheRulesAreServedAndSearched(t *testing.T) {
