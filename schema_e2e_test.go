@@ -78,7 +78,14 @@ func TestTheSchemaIsServed(t *testing.T) {
 		// The ORDERING that makes (uidNumber>=1000) an integer comparison.
 		"NAME 'uidNumber'",
 		"ORDERING integerOrderingMatch",
+		// RFC 2307's DESCs are one line: v0.12.3 published them with the
+		// RFC page's indentation inside the quotes (ldap v0.10.2).
+		"DESC 'An integer uniquely identifying a user in an administrative domain'",
+		"DESC 'An integer uniquely identifying a group in an administrative domain'",
 	)
+	if strings.Contains(out, "  administrative") || strings.Contains(out, "canonical  ") {
+		t.Errorf("a DESC carries the page layout of the RFC:\n%.2000s", out)
+	}
 	// Without the samba block there is no Samba schema to publish.
 	if strings.Contains(out, "sambaSamAccount") {
 		t.Errorf("sambaSamAccount is published by a server with no samba block:\n%.2000s", out)

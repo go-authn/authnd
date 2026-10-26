@@ -3,6 +3,21 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.12.4 — 2026-10-26
+
+### cn=Subschema: no page-layout whitespace inside RFC 2307 DESC values
+
+The DESC values of 13 RFC 2307 definitions in `cn=Subschema` carried the
+indentation of the RFC's page layout, e.g. `DESC 'An integer uniquely
+identifying a user in an         administrative domain'` for `uidNumber`. They
+are now one line with single spaces, as in the RFC text and OpenLDAP's
+`nis.schema`. The 6 attribute types are `uidNumber`, `gidNumber`,
+`ipHostNumber`, `ipNetworkNumber`, `ipNetmaskNumber` and `macAddress`; the 7
+object classes are `ipService`, `ipProtocol`, `oncRpc`, `ipHost`, `ipNetwork`,
+`ieee802Device` and `bootableDevice`. authnd now builds with `ldap` v0.10.2.
+Only the text of DESC changes; no OID, name, syntax or rule does. A client that
+caches the subschema picks the new text up the next time it reads it.
+
 ## v0.12.3 — 2026-10-26
 
 ### Schema loading no longer stalls on a huge schema file (denial of service)
