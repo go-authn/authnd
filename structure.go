@@ -96,7 +96,7 @@ func (s *server) checkStructure() error {
 	}
 	root, err := s.schema.GoverningStructureRule(container(base, class), nil)
 	if err != nil {
-		return fmt.Errorf("DIT structure rules: %s, the suffix (base_dn), as %s a %s: %s",
+		return fmt.Errorf("DIT structure rules: %s, the suffix (base_dn), as %s %s: %s",
 			base, article(class), class, whyNot(err))
 	}
 	t := &tree{}
@@ -127,8 +127,8 @@ func (s *server) checkStructure() error {
 			case err == nil:
 				placed++
 			case errors.As(err, &v) && v.Has(schema.NameFormViolation):
-				errs = append(errs, fmt.Errorf("DIT structure rules: authnd names its %s %s=<name>,%s, and a %s named so is refused: %s",
-					c.what, c.rdn, c.dn, class, whyNot(err)))
+				errs = append(errs, fmt.Errorf("DIT structure rules: authnd names its %s %s=<name>,%s, and %s %s named so is refused: %s",
+					c.what, c.rdn, c.dn, article(class), class, whyNot(err)))
 				placed++ // refused already: not also "nothing could be published"
 			default:
 				unplaced = append(unplaced, class+" ("+whyNot(err)+")")

@@ -187,8 +187,10 @@ func (s *server) withDeclared(classes, declared []string, skip map[string]bool) 
 type leftOff struct {
 	class   string
 	missing []string
-	// rule is the DIT content rule whose AUX does not list the class.
-	rule string
+	// rule is the DIT content rule whose AUX does not list the class -- or,
+	// with super, does not list super, a superclass the class needs listed
+	// beside it (RFC 4512 §3.3).
+	rule, super string
 }
 
 // unmet is the classes e must be published without: the declared classes
@@ -230,6 +232,22 @@ func (s *server) unmet(e *entry) (off []leftOff, skip map[string]bool) {
 		off = append(off, leftOff{class: oc.Name(), rule: rule})
 		skip[strings.ToLower(oc.Name())] = true
 	}
+	// A declared class whose superclass is left off goes with it, and is
+	// said: withDeclared would leave it off silently otherwise.
+	rules := map[string]string{} // left-off class -> its rule
+	for _, l := range off {
+		rules[strings.ToLower(l.class)] = l.rule
+	}
+	for _, name := range e.declared {
+		oc := s.schema.ObjectClass(name)
+		if skip[strings.ToLower(oc.Name())] {
+			continue
+		}
+		if sup := skippedBy(oc, skip); sup != nil {
+			off = append(off, leftOff{class: oc.Name(), rule: rules[strings.ToLower(sup.Name())], super: sup.Name()})
+			skip[strings.ToLower(oc.Name())] = true
+		}
+	}
 	for _, name := range e.declared {
 		oc := s.schema.ObjectClass(name)
 		var missing []string
@@ -261,10 +279,21 @@ func structuralOf(s *schema.Schema, shape []string) *schema.ObjectClass {
 // skipped reports whether a class, or one of its superclasses, is in skip:
 // a class whose superclass is left off goes too (RFC 4512 §3.3).
 func skipped(oc *schema.ObjectClass, skip map[string]bool) bool {
-	if skip[strings.ToLower(oc.Name())] {
-		return true
+	return skip[strings.ToLower(oc.Name())] || skippedBy(oc, skip) != nil
+}
+
+// skippedBy is the first superclass of oc, at any depth, that is in skip,
+// or nil. Class chains are short and acyclic (Build refuses a cycle).
+func skippedBy(oc *schema.ObjectClass, skip map[string]bool) *schema.ObjectClass {
+	for _, sup := range oc.Superiors() {
+		if skip[strings.ToLower(sup.Name())] {
+			return sup
+		}
+		if s := skippedBy(sup, skip); s != nil {
+			return s
+		}
 	}
-	return slices.ContainsFunc(oc.Superiors(), func(sup *schema.ObjectClass) bool { return skipped(sup, skip) })
+	return nil
 }
 
 // undeclared is the classes a source handed out that were not checked at
@@ -286,6 +315,11 @@ func (s *server) undeclared(names []string) []leftOff {
 func leftOffLines(e *entry, what string) []string {
 	var out []string
 	for _, l := range e.leftOff {
+		if l.super != "" {
+			out = append(out, fmt.Sprintf("%s is published without %s: its superclass %s is not allowed by the DIT content rule %s (not in its AUX)",
+				what, l.class, l.super, l.rule))
+			continue
+		}
 		if l.rule != "" {
 			out = append(out, fmt.Sprintf("%s is published without %s: the DIT content rule %s does not allow it (not in its AUX)", what, l.class, l.rule))
 			continue
