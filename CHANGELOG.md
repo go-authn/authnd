@@ -3,6 +3,29 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.13.1 — 2026-10-28
+
+Performance only; nothing a deployment has to change, and the same entries are
+published.
+
+authnd builds with `ldap` v0.11.1: string matching rules prepare printable
+ASCII values (RFC 4518, 2.1 to 2.4 are the identity on them) without the
+`x/text` transform round trips, and the DN parser allocates less. Measured with
+`BenchmarkPublish10k` (10,000 people, `-cpu 1`, `-benchtime 3x`, Apple M4 Max):
+
+| | v0.13.0 | v0.13.1 |
+|---|---|---|
+| with the rules of `testdata/rules.schema`: allocations | 4,160,044 | 3,640,042 (-12.5 %) |
+| with the rules: memory | 147.5 MiB | 102.5 MiB (-31 %) |
+| without rules: allocations | 2,650,036 | 2,390,036 (-9.8 %) |
+| without rules: memory | 88.0 MiB | 65.4 MiB (-26 %) |
+
+Times were taken at a load average of 10 to 16 and are not reliable: the run
+with the rules went from about 194 ms to about 157 ms, the run without from
+about 123 ms to about 100 ms, one run of three iterations each. The allocation
+counts do not depend on the load; a time on a quiet machine is not yet
+published.
+
 ## v0.13.0 — 2026-10-26
 
 ### DIT content rules, name forms and DIT structure rules, enforced
