@@ -3,6 +3,30 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.13.2 — 2026-10-29
+
+Performance only; nothing a deployment has to change, and the same entries are
+published.
+
+authnd builds with `ldap` v0.11.2: `Validate` makes 12 allocations for a ten
+attribute entry instead of 76 (lookups without a lower-case copy, descriptions
+not split and re-joined, in-place buffers instead of maps and appended slices).
+`BenchmarkPublish10k` (10,000 people, `-cpu 1`, `-benchtime 3x`, Apple M4 Max):
+
+| | v0.13.1 | v0.13.2 |
+|---|---|---|
+| with the rules of `testdata/rules.schema`: allocations | 3,640,042 | 1,280,038 (-65 %) |
+| with the rules: memory | 102.5 MiB | 54.8 MiB (-47 %) |
+| without rules: allocations | 2,390,036 | 850,036 (-64 %) |
+| without rules: memory | 65.4 MiB | 33.7 MiB (-48 %) |
+
+Against v0.13.0 (4,160,044 and 2,650,036 allocations) that is -69 % and -68 %.
+
+Times, five interleaved runs of ten iterations each at a load average of 8 to
+11 (a little above the 9 that is trusted): the run with the rules went from
+about 158 ms to about 90 ms, the run without from about 100 ms to about 55 ms.
+The allocation counts do not depend on the load.
+
 ## v0.13.1 — 2026-10-28
 
 Performance only; nothing a deployment has to change, and the same entries are
