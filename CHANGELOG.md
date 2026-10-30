@@ -3,6 +3,16 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## Unreleased
+
+Correction to the v0.13.3 entry below, text only. As first written it compared
+v0.13.3 with a v0.13.2 of 1,100,039 / 720,036 allocations, 45.4 / 26.5 MiB and
+70 / 38 ms (-12 % / -4 %). That baseline was not the v0.13.2 tag: it was run
+with the v0.13.3 source and only `go.mod` pinned to ldap v0.11.2. The tags,
+built from clean clones, give 1,280,040 / 850,036 allocations for v0.13.2 and
+970,039 / 690,036 for v0.13.3: -24 % and -19 %. The tag v0.13.3 and its code are
+unchanged; the table below is the corrected one.
+
 ## v0.13.3 — 2026-10-30
 
 Performance only; nothing a deployment has to change, and the same entries are
@@ -14,18 +24,21 @@ authnd builds with `ldap` v0.11.3 (`GoverningStructureRule` reads only the types
 of the RDN, the DN parser uses one buffer), and asks `schema.Validate` once for
 an entry that `unmet` has just checked and `validated` is about to check again:
 the entry has not changed, and Validate depends on the schema and the entry
-alone. `BenchmarkPublish10k` (10,000 people, `-cpu 1`, Apple M4 Max), v0.13.2
-and v0.13.3 measured together on the same toolchain, five interleaved runs
-of ten iterations at a load average of 4.8:
+alone. `BenchmarkPublish10k` (10,000 people, `-cpu 1`, Apple M4 Max), the
+tags v0.13.2 and v0.13.3 built from clean clones (the table was corrected after
+the release, see Unreleased):
 
 | | v0.13.2 | v0.13.3 |
 |---|---|---|
-| with the rules: allocations | 1,100,039 | 970,039 (-12 %) |
-| with the rules: memory | 45.4 MiB | 42.6 MiB |
-| with the rules: time | 70.0 ms | 65.8 ms (-6 %) |
-| without rules: allocations | 720,036 | 690,036 (-4 %) |
-| without rules: memory | 26.5 MiB | 25.7 MiB |
-| without rules: time | 37.9 ms | 36.0 ms (-5 %) |
+| with the rules: allocations | 1,280,040 | 970,039 (-24 %) |
+| with the rules: memory | 54.8 MiB | 42.6 MiB |
+| without rules: allocations | 850,036 | 690,036 (-19 %) |
+| without rules: memory | 33.7 MiB | 25.7 MiB |
+
+Times of v0.13.3, five interleaved runs of ten iterations at a load average of
+4.8: about 65.8 ms with the rules and 36.0 ms without. v0.13.2 was not timed at
+a load below 9 (indicative, at a load of 17 to 21: about 92 ms with the rules
+and 57 ms without).
 
 What the rules still cost per person: the entry of the benchmark carries a
 description that the content rule precludes, so the rules path validates it
