@@ -211,7 +211,7 @@ type leftOff struct {
 // takes them out of every search for something they did not choose.
 func (s *server) unmet(e *entry) (off []leftOff, skip map[string]bool) {
 	var v *schema.ValidationError
-	if !errors.As(e.Validate(s.schema), &v) {
+	if !errors.As(s.validate(e), &v) {
 		return nil, nil
 	}
 	skip = map[string]bool{}

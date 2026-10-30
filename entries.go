@@ -71,6 +71,21 @@ type entry struct {
 	// schema names), and leftOff the declared ones it does not, with why.
 	declared []string
 	leftOff  []leftOff
+	// checked says that checkedErr is what schema.Validate answers for the
+	// entry as it is now. unmet and validated ask the same question of the same
+	// entry, and Validate is a function of the schema and the entry alone:
+	// the second asks nothing (see validate). Whatever changes the attributes
+	// sets it again (validated, which drops attributes) or builds a new entry.
+	checked    bool
+	checkedErr error
+}
+
+// validate is e.Validate(s.schema), asked once for each state of e.
+func (s *server) validate(e *entry) error {
+	if !e.checked {
+		e.checkedErr, e.checked = e.Validate(s.schema), true
+	}
+	return e.checkedErr
 }
 
 // A dropped attribute is one a source gave that the entry could not carry,
@@ -169,7 +184,7 @@ func (s *server) placedAndValidated(e *entry) *entry {
 // reading of MUST and MAY here: two readings of the schema can disagree, and
 // the one that decides is Validate's.
 func (s *server) validated(e *entry) *entry {
-	err := e.Validate(s.schema)
+	err := s.validate(e)
 	var v *schema.ValidationError
 	if errors.As(err, &v) {
 		drop := map[string]string{}
@@ -196,7 +211,8 @@ func (s *server) validated(e *entry) *entry {
 				kept = append(kept, a)
 			}
 			e.Attributes = kept
-			err = e.Validate(s.schema)
+			e.checked = false // the attributes changed: ask again
+			err = s.validate(e)
 		}
 	}
 	e.invalid = err

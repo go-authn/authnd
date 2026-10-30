@@ -3,6 +3,38 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.13.3 — 2026-10-30
+
+Performance only; nothing a deployment has to change, and the same entries are
+published (a test holds a digest of every published entry, attribute, dropped
+attribute and left-off class of 400 people and groups, with and without the
+rules, that v0.13.2 produced).
+
+authnd builds with `ldap` v0.11.3 (`GoverningStructureRule` reads only the types
+of the RDN, the DN parser uses one buffer), and asks `schema.Validate` once for
+an entry that `unmet` has just checked and `validated` is about to check again:
+the entry has not changed, and Validate depends on the schema and the entry
+alone. `BenchmarkPublish10k` (10,000 people, `-cpu 1`, Apple M4 Max), v0.13.2
+and v0.13.3 measured together on the same toolchain, five interleaved runs
+of ten iterations at a load average of 4.8:
+
+| | v0.13.2 | v0.13.3 |
+|---|---|---|
+| with the rules: allocations | 1,100,039 | 970,039 (-12 %) |
+| with the rules: memory | 45.4 MiB | 42.6 MiB |
+| with the rules: time | 70.0 ms | 65.8 ms (-6 %) |
+| without rules: allocations | 720,036 | 690,036 (-4 %) |
+| without rules: memory | 26.5 MiB | 25.7 MiB |
+| without rules: time | 37.9 ms | 36.0 ms (-5 %) |
+
+What the rules still cost per person: the entry of the benchmark carries a
+description that the content rule precludes, so the rules path validates it
+twice (once before, once after dropping the attribute) where the path without
+rules validates it once, builds a `ValidationError` with its message, and holds
+the entry to the structure rules (a second read of its DN). Dropping the
+attribute and asking again is the behaviour the content rule is documented to
+have, and it is not changed here.
+
 ## v0.13.2 — 2026-10-29
 
 Performance only; nothing a deployment has to change, and the same entries are
