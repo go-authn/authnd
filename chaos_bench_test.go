@@ -69,14 +69,29 @@ func benchSearch(b *testing.B, r *running) {
 	}
 	b.ResetTimer()
 	for range b.N {
-		got, err := c.Search(ldaptest.Search{Base: "dc=example,dc=org", Scope: ldap.ScopeWholeSubtree, Filter: "(cn=g199)"})
+		got, err := c.Search(ldaptest.Search{Base: "dc=example,dc=org", Scope: ldap.ScopeWholeSubtree, Filter: "(cn=g0199)"})
 		if err != nil || len(got.Entries) != 1 {
 			b.Fatalf("%v %d", err, len(got.Entries))
 		}
 	}
 }
 
-func benchFixture(b *testing.B) *running {
+func benchFixture(b *testing.B) *running { return benchFixtureOf(b, 500, 200, 50) }
+
+// BenchmarkRefresh10k2k is a refresh of 10,000 people and 2,000 groups of 50
+// (100,000 membership rows): a site ten times the size, which the per-group
+// reading could not do inside the default period.
+func BenchmarkRefresh10k2k(b *testing.B) {
+	r := benchFixtureOf(b, 10000, 2000, 50)
+	b.ResetTimer()
+	for range b.N {
+		if _, err := r.srv.read(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func benchFixtureOf(b *testing.B, people, groups, per int) *running {
 	dir := b.TempDir()
 	dsn := write(b, dir, "dsn", dir+"/people.db\n")
 	db, err := sql.Open("sqlite", dir+"/people.db")
@@ -88,12 +103,12 @@ create table teams (team text, member text);`); err != nil {
 		b.Fatal(err)
 	}
 	tx, _ := db.Begin()
-	for p := 0; p < 500; p++ {
-		tx.Exec(`insert into staff values (?, 'pw')`, fmt.Sprintf("p%03d", p))
+	for p := 0; p < people; p++ {
+		tx.Exec(`insert into staff values (?, 'pw')`, fmt.Sprintf("p%05d", p))
 	}
-	for g := 0; g < 200; g++ {
-		for m := 0; m < 50; m++ {
-			tx.Exec(`insert into teams values (?, ?)`, fmt.Sprintf("g%03d", g), fmt.Sprintf("p%03d", (g*7+m)%500))
+	for g := 0; g < groups; g++ {
+		for m := 0; m < per; m++ {
+			tx.Exec(`insert into teams values (?, ?)`, fmt.Sprintf("g%04d", g), fmt.Sprintf("p%05d", (g*7+m)%people))
 		}
 	}
 	if err := tx.Commit(); err != nil {

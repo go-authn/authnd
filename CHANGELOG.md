@@ -3,6 +3,30 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.14.1 — 2026-10-31
+
+Performance only; same behaviour, same entries. A refresh no longer grows with
+groups x membership rows. v0.14.0 read each group's members, attributes and
+classes with a scan of the memberships each time (3 scans per group), so a
+site with a few thousand groups would not have finished a refresh inside the
+60 s period, and with `max_age` it would have stopped answering. authnd now
+builds on go-authn/directory v0.16.0 (`Set.Frozen`): each source is read once,
+in bulk, and the groups are answered from memory with the same merging.
+
+Exact allocations and times of one refresh, one core (`-cpu 1`), Apple M4 Max.
+The machine's load was 17 to 67 for the "before" and 17 to 21 for the "after",
+so the times are only the order of magnitude; the allocation counts are exact:
+
+| fixture (SQLite) | v0.14.0 | v0.14.1 |
+|---|---|---|
+| 500 people, 200 groups of 50 | 1.87 s, 39,959,235 allocs, 947 MB | 0.155 s, 3,095,482 allocs, 188 MB |
+| 10,000 people, 2,000 groups of 50 | 391.5 s, 6,373,736,235 allocs, 134 GB | 1.60 s, 31,198,460 allocs, 1.9 GB |
+
+The 10,000 / 2,000 refresh was six and a half periods before and is 2.7 % of
+the default period now: a margin of 37 times. Allocations fall by 13 and 204
+times. (`BenchmarkRefresh`, `BenchmarkRefresh10k2k`.) The remaining cost is
+reading 100,000 membership rows and publishing 12,000 entries.
+
 ## v0.14.0 — 2026-10-31
 
 ### Changed
@@ -45,11 +69,10 @@ Measured (Apple M4 Max, load 11 to 15: not a reliable machine, so only the
 order of magnitude): a refresh of 500 people and 200 groups of 50 on SQLite
 (`BenchmarkRefresh`) takes about 2 s of one core, nearly all of it
 go-authn/directory asking for each group's members, attributes and classes with
-a scan of the memberships each time (open issue, see below). A search takes
+a scan of the memberships each time (fixed in v0.14.1, above). A search takes
 0.5 ms (`BenchmarkSearchWithGroups`); with refreshes running back to back, the
-worst case, 11 ms (`BenchmarkSearchDuringRefresh`); at the default period a
-refresh is running 3 % of the time. Publishing 10,000 people is unchanged
-(`BenchmarkPublish10k`, 68 ms with the rules, 39 ms without).
+worst case, 11 ms (`BenchmarkSearchDuringRefresh`). Publishing 10,000 people is
+unchanged (`BenchmarkPublish10k`, 68 ms with the rules, 39 ms without).
 
 ## v0.13.4 — 2026-10-31
 

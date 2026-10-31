@@ -111,6 +111,43 @@ user "ann" { password = "x" }
 	}
 }
 
+// bulkSource reads its groups in bulk and fails the test if it is asked per
+// group: reading n groups per group is what made a refresh grow with groups x rows.
+type bulkSource struct {
+	t      *testing.T
+	groups map[string]directory.GroupData
+	err    error
+	reads  int
+}
+
+func (b *bulkSource) Describe() string                           { return "a bulk source" }
+func (b *bulkSource) Identities() ([]*directory.Identity, error) { return nil, nil }
+func (b *bulkSource) Members(string) ([]string, error) {
+	b.t.Error("asked for one group's members: the source was not read in bulk")
+	return nil, directory.ErrNoSuchGroup
+}
+func (b *bulkSource) ReadGroups() (map[string]directory.GroupData, error) {
+	b.reads++
+	return b.groups, b.err
+}
+
+func TestReadGroupsReadsABulkSourceOnce(t *testing.T) {
+	b := &bulkSource{t: t, groups: map[string]directory.GroupData{
+		"g1": {Members: []string{"a", "b"}}, "g2": {Members: []string{}},
+	}}
+	snap, err := readGroups(directory.NewSet(b), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.reads != 1 || len(snap.names) != 2 || len(snap.by["g1"].members) != 2 {
+		t.Fatalf("reads %d, names %v", b.reads, snap.names)
+	}
+	b.err = errBroken
+	if _, err := readGroups(directory.NewSet(b), nil); !errors.Is(err, errBroken) || !strings.Contains(err.Error(), "reading the groups") {
+		t.Fatalf("got %v", err)
+	}
+}
+
 // A source that cannot list groups is skipped, not refused.
 type unlisting struct{}
 
