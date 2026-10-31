@@ -71,7 +71,7 @@ func foldName(name string) string {
 
 // who is everybody this server answers for, as of now. Read it once per
 // operation: two reads may straddle a password change.
-func (s *server) who() map[string]*directory.Identity { return s.people.Load().byName }
+func (s *server) who() map[string]*directory.Identity { return s.snap.Load().people.byName }
 
 // A liveSource is the configuration file's own people, as the source set (and
 // the KDC reading through it) sees them.

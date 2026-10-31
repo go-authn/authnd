@@ -20,8 +20,8 @@ func reread(t *testing.T, srv *server) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv.groups = g
-	srv.published.Store(nil)
+	old := srv.snap.Load()
+	srv.snap.Store(newSnapshot(old.people, g, old.built))
 }
 
 // brokenSource fails at the stage it is told to, and otherwise has one group.
@@ -92,9 +92,9 @@ user "ann" { password = "x" }
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.srv.groups = snap
-	r.srv.published.Store(nil)
-	f := r.srv.groups.by["ghosts"]
+	old := r.srv.snap.Load()
+	r.srv.snap.Store(newSnapshot(old.people, snap, old.built))
+	f := snap.by["ghosts"]
 	if f == nil || f.missing == nil {
 		t.Fatalf("a group only a person names must be listed as missing: %+v", f)
 	}
@@ -177,11 +177,8 @@ user "ann" { password = "x" }
 	if len(a.all) == 0 || &a.all[0] != &b.all[0] {
 		t.Fatal("the second publish rebuilt the entries")
 	}
-	roster, err := newRoster(r.srv.sorted())
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.srv.people.Store(roster)
+	old := r.srv.snap.Load()
+	r.srv.snap.Store(newSnapshot(old.people, old.groups, old.built))
 	if c := r.srv.publish(); &c.all[0] == &a.all[0] {
 		t.Fatal("new people, old publication")
 	}

@@ -232,7 +232,7 @@ func report(cmd *cobra.Command, cfg *config) error {
 		w = tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(w, "GROUP\tMEMBERS\tPUBLISHED AS")
 		for _, g := range groups {
-			facts := srv.groups.by[g]
+			facts := srv.snap.Load().groups.by[g]
 			if facts.missing != nil {
 				fmt.Fprintf(w, "%s\t%v\t-\n", g, facts.missing)
 				continue

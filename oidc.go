@@ -171,6 +171,10 @@ func (s *server) BindSASL(ctx context.Context, sess ldap.Session, req *ldap.Bind
 		s.refused(name, fmt.Errorf("the token is for %q and asks to act as %q; this server does not delegate", name, authzid))
 		return s.oidcChallenge("insufficient_scope"), nil
 	}
+	if _, stale := s.tooOld(); stale {
+		s.refused(name, fmt.Errorf("the directory data is older than max_age"))
+		return s.oidcChallenge("invalid_token"), nil
+	}
 	id, ok := s.who()[name]
 	if !ok {
 		// The token is good and the person is not here. Said to the log,

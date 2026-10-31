@@ -3,12 +3,61 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.14.0 — 2026-10-31
+
+### Changed
+
+**v0.13.4 required a restart for any change to a group, and it should not
+have: a member removed from a database kept the access until somebody
+restarted authnd. v0.14.0 restores timely revocation.** Every source, people
+and groups, is read again every `refresh` (default `60s`; `refresh = "0"` is
+v0.13.4's behaviour, read once at startup). Before v0.13.4 groups were read at
+every search, which is what made a search cost 4.13 s on the 500 people / 200
+groups fixture; the refresh keeps the revocation and not the cost.
+
+- **A new snapshot per refresh, built off the serving path.** The people and
+  groups of every source are read, held to the same checks as at startup
+  (schema, content rules, the 3 MiB entry cap, a group block naming somebody
+  who is not served, the groups-listing refusal), and swapped in whole. A search
+  loads one snapshot and answers from it to the end: it never sees half of a
+  refresh.
+- **A refresh that fails changes nothing.** A source error, a query error or a
+  refusal that would refuse startup keeps the last good snapshot, and is logged
+  once per failure streak with the source named (and once when it works again).
+  There are no metrics in authnd, so there is no counter. What is left out of
+  the directory (an entry that fails the schema, an attribute dropped) is
+  logged again only when that set changes. The tree (suffix, `ou=people`,
+  `ou=groups`, the structure rules) is configuration and is not re-read.
+- **`max_age`** (unset by default: never refuse). When the served data is older
+  than `max_age` because refreshes keep failing, searches, binds of people and
+  password changes answer `unavailable` (52) instead of stale data. Readers (a
+  configuration entry), the root DSE and cn=Subschema keep answering. An
+  OAUTHBEARER bind answers `invalid_token`. Set it where revocation matters.
+- **A password change goes through the same swap.** A refresh that read the
+  sources before a password was written reads them again rather than put the
+  old password back; it gives up after three tries and the next period tries
+  again. A password write does not make the data look fresh.
+- **Bounded.** A refresh never overlaps the previous one (it is skipped and said
+  once), and gives up waiting for a slow source after one period; serving never
+  waits for either.
+
+Measured (Apple M4 Max, load 11 to 15: not a reliable machine, so only the
+order of magnitude): a refresh of 500 people and 200 groups of 50 on SQLite
+(`BenchmarkRefresh`) takes about 2 s of one core, nearly all of it
+go-authn/directory asking for each group's members, attributes and classes with
+a scan of the memberships each time (open issue, see below). A search takes
+0.5 ms (`BenchmarkSearchWithGroups`); with refreshes running back to back, the
+worst case, 11 ms (`BenchmarkSearchDuringRefresh`); at the default period a
+refresh is running 3 % of the time. Publishing 10,000 people is unchanged
+(`BenchmarkPublish10k`, 68 ms with the rules, 39 ms without).
+
 ## v0.13.4 — 2026-10-31
 
 A chaos pass: faults injected into the schema files, the database, the wire.
 Four defects found and fixed; nothing a correct deployment has to change.
 
-- **Groups are read once, at startup, like the people.** Every search used to run
+- **Groups are read once, at startup, like the people** (changed again in
+  v0.14.0: they are read every `refresh`). Every search used to run
   the groups queries again -- several full scans per group -- so one search over
   500 people and 200 groups of 50 took 4.13 s on SQLite (`BenchmarkSearchWithGroups`,
   Apple M4 Max) and now takes 1.2 ms, and a reader asking in a loop could keep a

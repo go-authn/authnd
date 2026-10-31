@@ -38,7 +38,7 @@ func BenchmarkPublish10k(b *testing.B) {
 			for b.Loop() {
 				// build, not publish: publish keeps its answer, and this
 				// measures the work of making it.
-				if p := srv.build(srv.people.Load()); len(p.valid()) != n {
+				if p := srv.build(srv.snap.Load()); len(p.valid()) != n {
 					b.Fatalf("%d published", len(p.valid()))
 				}
 			}

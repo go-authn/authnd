@@ -37,7 +37,7 @@ func (s *server) servedFrom() string {
 	return strings.Join(names, ", then ")
 }
 
-func (s *server) sorted() []*directory.Identity { return sortedOf(s.people.Load()) }
+func (s *server) sorted() []*directory.Identity { return sortedOf(s.snap.Load().people) }
 
 // sortedOf is the people of one roster, by name.
 func sortedOf(r *roster) []*directory.Identity {
@@ -57,7 +57,7 @@ func sortedOf(r *roster) []*directory.Identity {
 // fewer groups than it would answer a membership question about. That is the
 // honest half: a directory that will not enumerate is not a directory with no
 // groups, and `check` says where the list came from.
-func (s *server) groupNames() []string { return s.groups.names }
+func (s *server) groupNames() []string { return s.snap.Load().groups.names }
 
 // plural picks the word, so a message can say "1 person" without reading like
 // a machine wrote it.

@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"testing"
@@ -18,6 +19,64 @@ import (
 // 500 people and 200 groups of 50. Before v0.13.4 every search ran the groups
 // queries again, several full scans per group.
 func BenchmarkSearchWithGroups(b *testing.B) {
+	r := benchFixture(b)
+	benchSearch(b, r)
+}
+
+// BenchmarkRefresh is one refresh of the same directory: reading 500 people
+// and 200 groups of 50 into a snapshot, validating and publishing it.
+func BenchmarkRefresh(b *testing.B) {
+	r := benchFixture(b)
+	b.ResetTimer()
+	for range b.N {
+		if _, err := r.srv.read(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkSearchDuringRefresh is BenchmarkSearchWithGroups with refreshes
+// running back to back beside it: the cost a search pays for a refresh in
+// flight.
+func BenchmarkSearchDuringRefresh(b *testing.B) {
+	r := benchFixture(b)
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				r.srv.refreshOnce(context.Background(), time.Minute)
+			}
+		}
+	}()
+	benchSearch(b, r)
+	close(stop)
+	<-done
+}
+
+func benchSearch(b *testing.B, r *running) {
+	c, err := ldaptest.Dial(r.addr, 5*time.Second)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer c.Close()
+	if res, err := c.Bind("cn=reader,dc=example,dc=org", "let me read"); err != nil || res.Code != ldap.Success {
+		b.Fatal(res.Code, err)
+	}
+	b.ResetTimer()
+	for range b.N {
+		got, err := c.Search(ldaptest.Search{Base: "dc=example,dc=org", Scope: ldap.ScopeWholeSubtree, Filter: "(cn=g199)"})
+		if err != nil || len(got.Entries) != 1 {
+			b.Fatalf("%v %d", err, len(got.Entries))
+		}
+	}
+}
+
+func benchFixture(b *testing.B) *running {
 	dir := b.TempDir()
 	dsn := write(b, dir, "dsn", dir+"/people.db\n")
 	db, err := sql.Open("sqlite", dir+"/people.db")
@@ -52,19 +111,5 @@ users "sql" {
   groups = "select team, member from teams"
 }
 `, hclPath(dsn)))
-	c, err := ldaptest.Dial(r.addr, 5*time.Second)
-	if err != nil {
-		b.Fatal(err)
-	}
-	defer c.Close()
-	if res, err := c.Bind("cn=reader,dc=example,dc=org", "let me read"); err != nil || res.Code != ldap.Success {
-		b.Fatal(res.Code, err)
-	}
-	b.ResetTimer()
-	for range b.N {
-		got, err := c.Search(ldaptest.Search{Base: "dc=example,dc=org", Scope: ldap.ScopeWholeSubtree, Filter: "(cn=g199)"})
-		if err != nil || len(got.Entries) != 1 {
-			b.Fatalf("%v %d", err, len(got.Entries))
-		}
-	}
+	return r
 }
