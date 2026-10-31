@@ -3,7 +3,6 @@
 package main
 
 import (
-	"fmt"
 	"slices"
 	"strings"
 
@@ -38,10 +37,12 @@ func (s *server) servedFrom() string {
 	return strings.Join(names, ", then ")
 }
 
-func (s *server) sorted() []*directory.Identity {
-	who := s.who()
-	out := make([]*directory.Identity, 0, len(who))
-	for _, id := range who {
+func (s *server) sorted() []*directory.Identity { return sortedOf(s.people.Load()) }
+
+// sortedOf is the people of one roster, by name.
+func sortedOf(r *roster) []*directory.Identity {
+	out := make([]*directory.Identity, 0, len(r.byName))
+	for _, id := range r.byName {
 		out = append(out, id)
 	}
 	slices.SortFunc(out, func(a, b *directory.Identity) int { return strings.Compare(a.Name(), b.Name()) })
@@ -49,26 +50,14 @@ func (s *server) sorted() []*directory.Identity {
 }
 
 // groupNames is every group the sources can LIST, plus every one a person's
-// own entry named.
+// own entry named, as read at startup (groups.go).
 //
 // Listing is a different question from asking about one, and a source may
 // answer the second and not the first -- so what this server publishes can be
 // fewer groups than it would answer a membership question about. That is the
 // honest half: a directory that will not enumerate is not a directory with no
 // groups, and `check` says where the list came from.
-func (s *server) groupNames() []string {
-	names, err := s.dir.GroupNames()
-	if err != nil {
-		// Reported where a person looks, and not fatal: a set whose second
-		// source is down still publishes what its first one holds.
-		fmt.Fprintf(s.out, "the groups could not all be listed: %v\n", err)
-	}
-	for _, id := range s.who() {
-		names = append(names, id.Groups()...)
-	}
-	slices.Sort(names)
-	return slices.Compact(names)
-}
+func (s *server) groupNames() []string { return s.groups.names }
 
 // plural picks the word, so a message can say "1 person" without reading like
 // a machine wrote it.

@@ -48,8 +48,13 @@ type server struct {
 	// ⛔ Swapped, never edited. Every connection reads it without a lock,
 	// and a map written while another goroutine ranges over it ends the
 	// process. Read it through who(), once per operation.
-	people  atomic.Pointer[roster]
-	readers map[string]string // bind DN, lower-cased, to password
+	people atomic.Pointer[roster]
+	// groups is every group, read once at startup (groups.go).
+	groups *groupSnapshot
+	// published is what the last search was answered from, kept for as long as
+	// the people it was built from are the people (entries.go, publish).
+	published atomic.Pointer[builtPublication]
+	readers   map[string]string // bind DN, lower-cased, to password
 	// readerSecrets is the one-time-code secret for a reader that carries
 	// one. A service account usually has no phone, so this is usually empty
 	// and the mfa block says whether readers are asked at all.
@@ -184,6 +189,12 @@ func open(cfg *config, out io.Writer) (*server, error) {
 		return nil, err
 	}
 	s.people.Store(people)
+	// Every group is read here too, before anything listens: a groups query
+	// that fails refuses startup, as a people query does.
+	if s.groups, err = readGroups(s.dir, ids); err != nil {
+		s.dir.Close()
+		return nil, err
+	}
 	for _, g := range cfg.Groups {
 		for _, m := range g.Members {
 			if _, ok := people.byName[m]; !ok {

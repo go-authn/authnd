@@ -259,6 +259,7 @@ user "bob"   { password = "x" }
 			"empty":      descOnly,
 		},
 	})
+	reread(t, r.srv)
 	got := entriesOf(t, r.srv)
 	dn := func(n string) string { return "cn=" + n + ",ou=groups,dc=example,dc=org" }
 	people := func(n ...string) []string {
@@ -336,6 +337,7 @@ user "alice" { password = "x" }
 		Groups:     map[string][]string{"team": {"alice"}, "bad": {"alice"}},
 		GroupAttrs: map[string]directory.Attributes{"team": mail, "bad": badGID},
 	})
+	reread(t, r.srv)
 	got := entriesOf(t, r.srv)
 	team := got["cn=team,ou=groups,dc=example,dc=org"]
 	if team == nil || team.invalid != nil {
