@@ -522,7 +522,9 @@ once the served data is older, searches, people's binds and password changes
 answer `unavailable` (52); readers, the root DSE and cn=Subschema keep
 answering. Without `max_age` stale data is served for as long as refreshes fail.
 A refresh never overlaps the previous one and does not wait for a slow source
-longer than one period. What is left out (an entry that fails the schema) is
+longer than one period. It reads each source once, in bulk: 10,000 people and
+2,000 groups of 50 on SQLite take about 1.6 s of one core (v0.14.1; v0.14.0
+needed 390 s), 2.7 % of the default period. What is left out (an entry that fails the schema) is
 logged again only when that set changes.
 
 A source that cannot be read at **startup** — a groups query that does not run,
