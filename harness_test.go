@@ -21,7 +21,7 @@ type running struct {
 }
 
 // start opens a configuration and serves it on a port the kernel picks.
-func start(t *testing.T, body string) *running {
+func start(t testing.TB, body string) *running {
 	t.Helper()
 	dir := t.TempDir()
 	cfg, err := loadConfig([]string{write(t, dir, "c.hcl", body)})
@@ -54,7 +54,7 @@ func start(t *testing.T, body string) *running {
 
 func (r *running) url() string { return "ldap://" + r.addr }
 
-func waitFor(t *testing.T, addr string) {
+func waitFor(t testing.TB, addr string) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for {
@@ -89,7 +89,7 @@ func (s *safeBuffer) String() string {
 	return s.b.String()
 }
 
-func write(t *testing.T, dir, name, body string) string {
+func write(t testing.TB, dir, name, body string) string {
 	t.Helper()
 	p := filepath.Join(dir, name)
 	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {

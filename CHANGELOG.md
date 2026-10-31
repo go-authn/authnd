@@ -3,9 +3,47 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
-## Unreleased
+## v0.13.4 — 2026-10-31
 
-Correction to the v0.13.3 entry below, text only. As first written it compared
+A chaos pass: faults injected into the schema files, the database, the wire.
+Four defects found and fixed; nothing a correct deployment has to change.
+
+- **Groups are read once, at startup, like the people.** Every search used to run
+  the groups queries again -- several full scans per group -- so one search over
+  500 people and 200 groups of 50 took 4.13 s on SQLite (`BenchmarkSearchWithGroups`,
+  Apple M4 Max) and now takes 1.2 ms, and a reader asking in a loop could keep a
+  database busy. A groups query that failed in the middle of a search left the
+  group out of an answer that still said Success: people from the startup
+  snapshot, groups from "now", the broken half silently missing, and a client
+  that reads a missing group as "nobody is in it" revokes access. A change to a
+  group in a database is now picked up by a restart, as a change to a person
+  always was (README, "Sources are read once").
+- **A source that cannot be read refuses startup and `check`**, naming the source
+  and the group: a groups query that does not run, or one of several sources
+  down. `directory.Set.GroupNames` keeps the groups the sources that answered
+  named and drops the error of one that did not, so a second database that was
+  down was a smaller directory with nothing saying so; authnd now asks each
+  source for its own list.
+- **The publication is built once per set of people**, not once per search; a
+  password change builds it again.
+- **An entry too large to send is not published.** A 10 MB attribute value in a
+  database row made an entry past the 4 MiB message go-authn/ldap accepts, which
+  OpenLDAP's client and the library's own refuse to read -- and the refusal took
+  the whole search. The entry is withheld, as one that fails the schema is, and
+  said at startup and by `check`.
+
+Held, with a test: a schema file truncated at every byte offset (a SUPANN-sized
+one, `rules.schema`, `example.schema`, `example.ldif`: 17,000 offsets) is refused
+naming the file or builds a shorter schema, never panics, never half-loads; a
+schema file removed or halved between `check` and the start is refused; a corrupt
+database, a NULL name, invalid UTF-8, a removed database file; 300 idle
+connections, BER lengths up to 2^32-1, filters nested 20,000 deep.
+
+Open: no cap on the number of connections (go-authn/ldap), no operation timeout
+that reaches a blocked source (go-authn/directory has no context). See the
+issues of this repository.
+
+Also in this release, a correction to the v0.13.3 entry below, text only. As first written it compared
 v0.13.3 with a v0.13.2 of 1,100,039 / 720,036 allocations, 45.4 / 26.5 MiB and
 70 / 38 ms (-12 % / -4 %). That baseline was not the v0.13.2 tag: it was run
 with the v0.13.3 source and only `go.mod` pinned to ldap v0.11.2. The tags,

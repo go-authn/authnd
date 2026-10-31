@@ -597,6 +597,7 @@ func TestCheckSaysWhenSourcesDisagreeOnAGroup(t *testing.T) {
 		GroupClasses: map[string]directory.ObjectClasses{"staff": same}})
 	srv.dir.Add(&directory.Static{Name: "another list", Groups: map[string][]string{"staff": {"ann"}},
 		GroupClasses: map[string]directory.ObjectClasses{"staff": other}})
+	reread(t, srv)
 	lines := srv.groupClassConflicts()
 	if len(lines) != 1 {
 		t.Fatalf("conflicts: %q, want one", lines)
