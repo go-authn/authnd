@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -92,6 +93,9 @@ func TestChaosGroupsTableDroppedMidRun(t *testing.T) {
 // The file removed from under the server: the open handle keeps answering on
 // Unix, and nothing a search reads changes.
 func TestChaosDatabaseFileRemovedMidRun(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not remove a file somebody holds open")
+	}
 	r, db := peopleServer(t)
 	before := readerSearchAll(t, r)
 	if err := os.Remove(db); err != nil {

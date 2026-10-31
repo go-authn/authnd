@@ -92,7 +92,7 @@ func TestChaosOversizedBERLength(t *testing.T) {
 		buf := make([]byte, 64)
 		_, err = c.Read(buf)
 		if ne, ok := err.(net.Error); ok && ne.Timeout() {
-			t.Errorf("%x: the connection was held open waiting for %d bytes it will never get", head, 1<<31)
+			t.Errorf("%x: the connection was held open waiting for %d bytes it will never get", head, int64(1)<<31)
 		}
 		c.Close()
 	}
