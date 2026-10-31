@@ -123,26 +123,12 @@ func (p publication) rejected() []*entry {
 
 // publish builds every entry and holds each one to the schema.
 //
-// ⛔ It is a function of the people, the groups (read once), the schema and the
-// configuration, and the last three never change while the server runs, so the
-// answer is kept for as long as the roster it was built from is the roster. A
+// ⛔ It is a function of a snapshot (the people and the groups), the schema and
+// the configuration, and the last two never change while the server runs, so
+// the answer is kept with the snapshot it was built from (refresh.go). A
 // search used to build and validate every entry again: the same work, for the
 // same answer, once per search.
-func (s *server) publish() publication {
-	r := s.people.Load()
-	if c := s.published.Load(); c != nil && c.roster == r {
-		return c.p
-	}
-	p := s.build(r)
-	s.published.Store(&builtPublication{roster: r, p: p})
-	return p
-}
-
-// builtPublication is a publication and the roster it was built from.
-type builtPublication struct {
-	roster *roster
-	p      publication
-}
+func (s *server) publish() publication { return s.publication(s.snap.Load()) }
 
 // maxEntryBytes is the most an entry may weigh to be published: what
 // go-authn/ldap lets one message hold, less a megabyte for the rest of the
@@ -169,10 +155,10 @@ func sized(e *entry) {
 	}
 }
 
-// build is every entry for these people, each held to the schema.
-func (s *server) build(r *roster) publication {
+// build is every entry for this snapshot, each held to the schema.
+func (s *server) build(sn *snapshot) publication {
 	var p publication
-	for _, id := range sortedOf(r) {
+	for _, id := range sortedOf(sn.people) {
 		e := s.personEntry(id, nil)
 		if off, skip := s.unmet(e); len(off) > 0 {
 			e = s.personEntry(id, skip)
@@ -180,8 +166,8 @@ func (s *server) build(r *roster) publication {
 		}
 		p.all = append(p.all, s.placedAndValidated(e))
 	}
-	for _, name := range s.groups.names {
-		e, err := s.groupEntry(name, nil)
+	for _, name := range sn.groups.names {
+		e, err := s.groupEntryFrom(sn.groups, name, nil)
 		if err != nil {
 			// A source that cannot answer for a group: it is left out, as it
 			// was before, and `check` says so from its own question.
@@ -189,7 +175,7 @@ func (s *server) build(r *roster) publication {
 		}
 		if off, skip := s.unmet(e); len(off) > 0 {
 			// Found a moment ago in the same snapshot: it cannot fail now.
-			e, _ = s.groupEntry(name, skip)
+			e, _ = s.groupEntryFrom(sn.groups, name, skip)
 			e.leftOff = append(e.leftOff, off...)
 		}
 		p.all = append(p.all, s.placedAndValidated(e))
@@ -413,7 +399,12 @@ func (s *server) personEntry(id *directory.Identity, skip map[string]bool) *entr
 //     are optional -- a set that may be empty, which is what this group is.
 //     It takes description, ou and seeAlso, as groupOfNames does.
 func (s *server) groupEntry(name string, skip map[string]bool) (*entry, error) {
-	facts := s.groups.by[name]
+	return s.groupEntryFrom(s.snap.Load().groups, name, skip)
+}
+
+// groupEntryFrom is groupEntry for the groups of one snapshot.
+func (s *server) groupEntryFrom(g *groupSnapshot, name string, skip map[string]bool) (*entry, error) {
+	facts := g.by[name]
 	if facts == nil || facts.missing != nil {
 		return nil, fmt.Errorf("%w: %q", directory.ErrNoSuchGroup, name)
 	}

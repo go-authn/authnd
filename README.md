@@ -502,18 +502,36 @@ startup**, naming both and where each came from. A password change is also
 authorized on the exact identity the connection bound as, not on a DN
 comparison, so the two controls do not depend on each other.
 
-### Sources are read once, and a source that cannot be read stops the start
+### Sources are read every `refresh`, and a source that cannot be read stops the start
 
-The people **and the groups** of every source are read at startup, and a search
-asks no database anything: a change in a database is picked up by a restart, and
-a database that breaks afterwards changes no answer (a search over 500 people and
-200 groups of 50 took 4.13 s before v0.13.4, when every search ran the groups
-queries again, and takes 1.2 ms now). A source that cannot be read at startup — a
-groups query that does not run, one of several databases down — **refuses
-startup and `check`**, naming the source and the group, rather than starting as
-a smaller directory. An entry too large for one LDAP message (about 3 MiB, one
-10 MB attribute value is enough) is **not published**, as an entry that fails the
-schema is not, and is said at startup and by `check`.
+The people **and the groups** of every source are read at startup and then
+again every `refresh` (top-level, `"60s"` by default, at least one second;
+`refresh = "0"` reads once, at startup). A removed person or a removed group
+member is gone from the directory within one period. The new data is read,
+checked against the schema and the rules, and published into a **new snapshot
+off the serving path**, then swapped in whole: a search asks no database
+anything and answers from one snapshot to the end. A search over 500 people and
+200 groups of 50 took 4.13 s in v0.13.3, when every search ran the groups
+queries, and takes 0.5 ms.
+
+A refresh that fails (a source down, a query that does not run, a group block
+naming somebody who is no longer served) **keeps the last good snapshot** and
+says so once per failure streak, naming the source. To stop serving data that
+may have been revoked, set `max_age` (for example `"10m"`, at least `refresh`):
+once the served data is older, searches, people's binds and password changes
+answer `unavailable` (52); readers, the root DSE and cn=Subschema keep
+answering. Without `max_age` stale data is served for as long as refreshes fail.
+A refresh never overlaps the previous one and does not wait for a slow source
+longer than one period. What is left out (an entry that fails the schema) is
+logged again only when that set changes.
+
+A source that cannot be read at **startup** — a groups query that does not run,
+one of several databases down — **refuses startup and `check`**, naming the
+source and the group, rather than starting as a smaller directory. An entry too
+large for one LDAP message (about 3 MiB, one 10 MB attribute value is enough) is
+**not published**, as an entry that fails the schema is not, and is said at
+startup and by `check`. v0.13.4 had no refresh and needed a restart for any
+change to a group; v0.14.0 does not.
 
 ### Changing a password proves the old one
 

@@ -40,21 +40,16 @@ type server struct {
 	// a password change is written, so that everything reading through dir
 	// -- the KDC included -- sees the password the change wrote.
 	local *liveSource
-	// people is everybody, by name, read once at startup and swapped whole
-	// after a password change. A change in a source somebody else owns is
-	// picked up by a restart -- see the note on reading in
-	// github.com/go-authn/directory, which is where that decision lives.
+	// snap is everybody and every group, with what is published from them:
+	// read at startup, built again every `refresh` off the serving path, and
+	// swapped whole (refresh.go).
 	//
 	// ⛔ Swapped, never edited. Every connection reads it without a lock,
 	// and a map written while another goroutine ranges over it ends the
-	// process. Read it through who(), once per operation.
-	people atomic.Pointer[roster]
-	// groups is every group, read once at startup (groups.go).
-	groups *groupSnapshot
-	// published is what the last search was answered from, kept for as long as
-	// the people it was built from are the people (entries.go, publish).
-	published atomic.Pointer[builtPublication]
-	readers   map[string]string // bind DN, lower-cased, to password
+	// process. An operation loads it ONCE and uses that one: two loads may
+	// straddle a swap. who() is one load.
+	snap    atomic.Pointer[snapshot]
+	readers map[string]string // bind DN, lower-cased, to password
 	// readerSecrets is the one-time-code secret for a reader that carries
 	// one. A service account usually has no phone, so this is usually empty
 	// and the mfa block says whether readers are asked at all.
@@ -100,6 +95,18 @@ type server struct {
 	binds   int
 	serving bool
 	closed  bool
+
+	// The periodic refresh (refresh.go).
+	rctx       context.Context
+	rcancel    context.CancelFunc
+	rdone      sync.WaitGroup
+	swapMu     sync.Mutex    // held to swap snap, and to rebuild it after a password write
+	gen        atomic.Uint64 // counts the swaps a password write made; a refresh built before one is discarded
+	refreshing atomic.Bool
+	failing    bool // a refresh failed and none has worked since; under mu
+	now        func() time.Time
+	ticker     func(time.Duration) (<-chan time.Time, func())
+	beforeSwap func() // a test's way to force an interleaving; nil otherwise
 }
 
 // open reads every source and builds the answers, before anything listens.
@@ -110,7 +117,13 @@ func open(cfg *config, out io.Writer) (*server, error) {
 		readerSecrets: map[string][]byte{},
 		peopleDN:      "ou=people," + cfg.BaseDN,
 		groupsDN:      "ou=groups," + cfg.BaseDN,
+		now:           time.Now,
+		ticker: func(d time.Duration) (<-chan time.Time, func()) {
+			t := time.NewTicker(d)
+			return t.C, t.Stop
+		},
 	}
+	s.rctx, s.rcancel = context.WithCancel(context.Background())
 	sch, err := directorySchema(cfg)
 	if err != nil {
 		return nil, err
@@ -188,21 +201,18 @@ func open(cfg *config, out io.Writer) (*server, error) {
 		s.dir.Close()
 		return nil, err
 	}
-	s.people.Store(people)
 	// Every group is read here too, before anything listens: a groups query
 	// that fails refuses startup, as a people query does.
-	if s.groups, err = readGroups(s.dir, ids); err != nil {
+	groups, err := readGroups(s.dir, ids)
+	if err != nil {
 		s.dir.Close()
 		return nil, err
 	}
-	for _, g := range cfg.Groups {
-		for _, m := range g.Members {
-			if _, ok := people.byName[m]; !ok {
-				s.dir.Close()
-				return nil, fmt.Errorf("group %q has %q in it, who is not in %s", g.Name, m, s.dir.Describe())
-			}
-		}
+	if err := s.checkConfigGroups(people); err != nil {
+		s.dir.Close()
+		return nil, err
 	}
+	s.snap.Store(newSnapshot(people, groups, s.now()))
 	return s, nil
 }
 
@@ -241,6 +251,10 @@ func (s *server) Close() error {
 	if closed {
 		return nil
 	}
+	if s.rcancel != nil {
+		s.rcancel()
+	}
+	s.rdone.Wait()
 	switch {
 	case serving:
 		s.ldap.Close() // sends on Quit, and waits for Serve to acknowledge
@@ -363,23 +377,8 @@ func (s *server) listen() error {
 	for _, l := range s.schemaLines() {
 		fmt.Fprintln(s.out, l)
 	}
-	p := s.publish()
-	for _, e := range p.rejected() {
-		fmt.Fprintf(s.out, "%s is NOT published: it fails the schema: %s\n", e.DN, strings.Join(problems(e.invalid), "; "))
-	}
-	for _, e := range p.all {
-		if e.invalid != nil {
-			continue
-		}
-		if e.noSID != "" {
-			fmt.Fprintf(s.out, "%s is published without sambaNTPassword: %s\n", e.DN, e.noSID)
-		}
-		for _, l := range leftOffLines(e, e.DN) {
-			fmt.Fprintln(s.out, l)
-		}
-		for _, d := range e.dropped {
-			fmt.Fprintf(s.out, "%s is published without %s: %s\n", e.DN, d.name, d.why)
-		}
+	for _, l := range leftOutLines(s.publish()) {
+		fmt.Fprintln(s.out, l)
 	}
 	return nil
 }
@@ -407,6 +406,9 @@ func (s *server) serve() error {
 	}
 	s.serving = true
 	r := s.realm
+	// Under the lock, so that Close, which sets closed under it and then
+	// waits, never meets an Add that had not happened yet.
+	s.startRefresh()
 	s.mu.Unlock()
 
 	ldapDone := make(chan error, 1)
@@ -518,6 +520,9 @@ func (s *server) Bind(_ context.Context, _ ldap.Session, req *ldap.BindRequest) 
 			return ldap.Result{Code: ldap.Success}, nil
 		}
 		return ldap.Result{Code: ldap.InvalidCredentials}, nil
+	}
+	if res, stale := s.tooOld(); stale {
+		return res, nil
 	}
 	name, ok := s.nameOf(bindDN)
 	if !ok {
@@ -636,7 +641,12 @@ func (s *server) Search(ctx context.Context, sess ldap.Session, req *ldap.Search
 	// out here, and Filter.Matches compares strings.
 	//
 	// Only entries that pass the schema are here: see entries.go.
-	for _, e := range s.publish().valid() {
+	if res, stale := s.tooOld(); stale {
+		return res, nil
+	}
+	// One snapshot for the whole search: a refresh that swaps in the middle
+	// is seen by the next search, never by half of this one.
+	for _, e := range s.publication(s.snap.Load()).valid() {
 		if err := ctx.Err(); err != nil {
 			return ldap.Result{}, err
 		}
@@ -692,6 +702,9 @@ func (s *server) Modify(ctx context.Context, sess ldap.Session, req *ldap.Modify
 		return ldap.WriteResult{Result: refusal}, nil
 	}
 
+	if res, stale := s.tooOld(); stale {
+		return ldap.WriteResult{Result: res}, nil
+	}
 	change, err := onlyAPasswordChange(req.Changes)
 	if err != nil {
 		return ldap.WriteResult{Result: ldap.Refuse(ldap.UnwillingToPerform, "%s", err)}, nil
@@ -875,12 +888,17 @@ func (s *server) reloadLocal() error {
 	for _, id := range fresh {
 		owned[id.Name()] = true
 	}
+	// The swap is taken from here to the end: the snapshot this builds on is
+	// the one it replaces, and a refresh that read the sources before this
+	// ran is discarded by the generation (refresh.go), not merged.
+	s.swapMu.Lock()
+	defer s.swapMu.Unlock()
 	ids := slices.Clone(fresh)
-	before := s.people.Load()
-	for name, id := range before.byName {
+	before := s.snap.Load()
+	for name, id := range before.people.byName {
 		// Somebody the file held before and holds no longer is gone, as
 		// they are from the source set the KDC reads.
-		if !owned[name] && !before.local[name] {
+		if !owned[name] && !before.people.local[name] {
 			ids = append(ids, id)
 		}
 	}
@@ -889,7 +907,10 @@ func (s *server) reloadLocal() error {
 		return err
 	}
 	s.local.p.Store(local)
-	s.people.Store(people)
+	// built is the old one's: a password written to the file proves nothing
+	// about how fresh the databases are.
+	s.snap.Store(&snapshot{people: people, groups: before.groups, built: before.built})
+	s.gen.Add(1)
 	return nil
 }
 
@@ -937,6 +958,9 @@ func (s *server) Extended(ctx context.Context, sess ldap.Session, req *ldap.Exte
 		return ldap.ExtendedResult{Result: ldap.Refuse(ldap.ProtocolError, "%s", err)}, nil
 	}
 
+	if res, stale := s.tooOld(); stale {
+		return ldap.ExtendedResult{Result: res}, nil
+	}
 	who := sess.BoundDN()
 	if who == "" {
 		return ldap.ExtendedResult{Result: ldap.Refuse(ldap.InsufficientAccessRights,

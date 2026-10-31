@@ -93,6 +93,14 @@ type config struct {
 	Users       []userBlock    `hcl:"user,block"`
 	Groups      []groupBlock   `hcl:"group,block"`
 	Directories []hcldir.Block `hcl:"users,block"`
+
+	// Refresh is how often every source is read again, in the form Go parses
+	// ("60s"). Empty means 60s; "0" means never, which is v0.13.4's reading
+	// once at startup. MaxAge, when set, is how old the data being served may
+	// get while refreshes keep failing before searches and binds that need it
+	// answer unavailable instead (refresh.go).
+	Refresh string `hcl:"refresh,optional"`
+	MaxAge  string `hcl:"max_age,optional"`
 }
 
 // An mfaBlock asks for more than a password at a bind.
@@ -253,6 +261,9 @@ func (c *config) check() error {
 	}
 	if _, _, err := net.SplitHostPort(c.Listen); err != nil {
 		return fmt.Errorf("listen: %q is not an address to listen on: %w", c.Listen, err)
+	}
+	if err := c.checkRefresh(); err != nil {
+		return err
 	}
 	if c.BaseDN == "" {
 		return fmt.Errorf("no base_dn: a directory has to say where it is (for example dc=example,dc=org)")

@@ -21,7 +21,11 @@ type running struct {
 }
 
 // start opens a configuration and serves it on a port the kernel picks.
-func start(t testing.TB, body string) *running {
+func start(t testing.TB, body string) *running { t.Helper(); return startWith(t, body, nil) }
+
+// startWith is start, with a chance to change the server (its clock, its
+// ticker) after it is open and before it listens.
+func startWith(t testing.TB, body string, tweak func(*server)) *running {
 	t.Helper()
 	dir := t.TempDir()
 	cfg, err := loadConfig([]string{write(t, dir, "c.hcl", body)})
@@ -32,6 +36,9 @@ func start(t testing.TB, body string) *running {
 	srv, err := open(cfg, out)
 	if err != nil {
 		t.Fatalf("opening: %v", err)
+	}
+	if tweak != nil {
+		tweak(srv)
 	}
 	if err := srv.listen(); err != nil {
 		srv.Close()
