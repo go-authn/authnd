@@ -3,6 +3,12 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## Unreleased
+
+CI only. The toolchain now comes from go.mod (`go-version-file`, where several
+jobs each named `1.27.3`) and a `govulncheck ./...` job fails the build on any
+finding. No code change, no release.
+
 ## v0.14.1 — 2026-10-31
 
 Performance only; same behaviour, same entries. A refresh no longer grows with
