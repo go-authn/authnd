@@ -53,6 +53,7 @@ func TestChaosSchemaFileTruncatedAtEveryOffset(t *testing.T) {
 	}
 	for name, full := range files {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			path := filepath.Join(dir, name)
 			refused, built := 0, 0
 			for n := 0; n <= len(full); n++ {
