@@ -387,7 +387,10 @@ func refusedWithBusy(t testing.TB, addr string) (busy, closed bool) {
 	// whose resultCode is busy (51), and the notice of disconnection OID
 	// 1.3.6.1.4.1.1466.20036.
 	busy = bytes.Contains(got, []byte("1.3.6.1.4.1.1466.20036")) && bytes.Contains(got, []byte{0x0a, 0x01, 51})
-	return busy, err == nil
+	// A reset is also a hang-up (the server closed with the client's bytes
+	// unread, or its backlog overflowed); only our own read deadline means
+	// the server kept the connection.
+	return busy, !errors.Is(err, os.ErrDeadlineExceeded)
 }
 
 // Chaos: a connection flood beyond the cap is refused with busy, the ones
