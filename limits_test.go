@@ -402,16 +402,26 @@ func TestChaosConnectionFloodBeyondTheCap(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cl.Close()
-	var held []net.Conn
+	var held []func()
 	for range 19 {
-		c, err := net.Dial("tcp", r.addr)
+		c, err := lt.Dial(r.addr, 5*time.Second)
 		if err != nil {
 			t.Fatal(err)
 		}
-		held = append(held, c)
+		held = append(held, func() { c.Close() })
+		// Speaking proves the server admitted and counted it.
+		_ = c.SetDeadline(time.Now().Add(20 * time.Second))
+		if _, err := c.Bind("cn=reader,dc=example,dc=org", "let me read"); err != nil {
+			t.Fatalf("a connection inside the cap: %v", err)
+		}
 	}
-	// Let the server count them.
-	waitUntil(t, func() bool { return refusedWithBusyQuick(r.addr) }, "the cap to bind")
+	_ = cl.SetDeadline(time.Now().Add(20 * time.Second))
+	if _, err := cl.Bind("cn=reader,dc=example,dc=org", "let me read"); err != nil {
+		t.Fatal(err)
+	}
+	if !refusedWithBusyQuick(r.addr) {
+		t.Fatal("the cap did not bind")
+	}
 
 	var wg sync.WaitGroup
 	var busyN, closedN atomic.Int32
@@ -439,8 +449,8 @@ func TestChaosConnectionFloodBeyondTheCap(t *testing.T) {
 	}
 	// Close them all: new connections are accepted again.
 	cl.Close()
-	for _, c := range held {
-		c.Close()
+	for _, closeIt := range held {
+		closeIt()
 	}
 	waitUntil(t, func() bool {
 		code, _ := bindAsQuiet(r.addr, "cn=reader,dc=example,dc=org", "let me read")
@@ -486,20 +496,23 @@ func waitUntil(t testing.TB, f func() bool, what string) {
 // The per-address cap: loopback is one address.
 func TestChaosPerAddressCap(t *testing.T) {
 	r := start(t, networkConfig+"\nmax_connections_per_ip = 3\n")
-	var held []net.Conn
+	// Each held connection speaks, so that the server has certainly admitted
+	// and counted it before the probe (a bare dial returns when the kernel has
+	// the connection, not when the server has accepted it).
 	for range 3 {
-		c, err := net.Dial("tcp", r.addr)
+		c, err := lt.Dial(r.addr, 5*time.Second)
 		if err != nil {
 			t.Fatal(err)
 		}
-		held = append(held, c)
-	}
-	defer func() {
-		for _, c := range held {
-			c.Close()
+		defer c.Close()
+		_ = c.SetDeadline(time.Now().Add(20 * time.Second))
+		if _, err := c.Bind("cn=reader,dc=example,dc=org", "let me read"); err != nil {
+			t.Fatalf("a connection inside the cap: %v", err)
 		}
-	}()
-	waitUntil(t, func() bool { return refusedWithBusyQuick(r.addr) }, "the per-address cap")
+	}
+	if !refusedWithBusyQuick(r.addr) {
+		t.Fatal("the fourth connection from one address was not refused")
+	}
 }
 
 // Chaos: a handler blocked past the deadline. The upstream accepts the bind and

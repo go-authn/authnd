@@ -3,6 +3,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -17,9 +18,9 @@ import (
 // ⛔ The certificate used to be read once, at startup, and a renewed one (ACME,
 // every 60 to 90 days) needed a restart: a directory whose certificate expired
 // at 03:00 stopped being trusted by every client until somebody noticed. The
-// store looks at the two files' identity (size, modification time and, where
-// the platform has one, the inode, which changes when a renewer replaces the
-// file by renaming a new one over it) at most once per `recheck`, on the first
+// store looks at the two files' identity (the SHA-256 of their content, which
+// sees a renewer renaming a new file over the old one as well as one rewriting
+// it in place) at most once per `recheck`, on the first
 // handshake after that, and on SIGHUP. It does not need the refresh tick,
 // which `refresh = "0"` turns off.
 //
@@ -47,20 +48,27 @@ type fileIdentity struct {
 	cert, key fileStamp
 }
 
+// fileStamp is the SHA-256 of a file's content. ⛔ It used to be (size,
+// modification time, inode): a renewed certificate of the same size, written
+// within the filesystem's timestamp tick into a recycled inode, looked
+// unchanged, and was not served (seen under qemu on CI). The files are a few
+// kilobytes and are read at most once per `recheck`; the content is the only
+// identity that cannot collide.
 type fileStamp struct {
-	size  int64
-	mtime time.Time
-	inode uint64
-	ok    bool
+	sum [sha256.Size]byte
+	ok  bool
 }
 
 func stampOf(path string) fileStamp {
-	fi, err := os.Stat(path)
-	if err != nil {
+	b, err := os.ReadFile(path)
+	if err != nil || len(b) > maxCertFile {
 		return fileStamp{}
 	}
-	return fileStamp{size: fi.Size(), mtime: fi.ModTime(), inode: inodeOf(fi), ok: true}
+	return fileStamp{sum: sha256.Sum256(b), ok: true}
 }
+
+// maxCertFile bounds what is read to look at a certificate or key file.
+const maxCertFile = 1 << 20
 
 func (s *certStore) identity() fileIdentity {
 	return fileIdentity{cert: stampOf(s.certFile), key: stampOf(s.keyFile)}

@@ -174,6 +174,50 @@ func TestChaosCertificateReplacedWithGarbage(t *testing.T) {
 	}
 }
 
+// A renewed pair of the same size, rewritten in place with the old modification
+// time restored, is what a stat-based identity (size, mtime, inode) cannot see.
+func TestCertificateReloadSeesAnUnchangedStat(t *testing.T) {
+	r, certPath, keyPath := tlsServer(t)
+	recheckEvery(r, 0)
+	old, err := os.ReadFile(certPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldKey, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(certPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fk, err := os.Stat(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c2, k2 []byte
+	for range 500 { // ECDSA signatures vary by a byte or two: draw until the size matches
+		c2, k2 = pairPEM(t, 2)
+		if len(c2) == len(old) && len(k2) == len(oldKey) {
+			break
+		}
+	}
+	if len(c2) != len(old) || len(k2) != len(oldKey) {
+		t.Skip("could not draw a pair of the same size")
+	}
+	if err := os.WriteFile(certPath, c2, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, k2, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Chtimes(certPath, fi.ModTime(), fi.ModTime())
+	_ = os.Chtimes(keyPath, fk.ModTime(), fk.ModTime())
+	if got := serialServed(t, r.addr); got != 2 {
+		t.Fatalf("a rewritten pair with the same size and time was not served: serial %d", got)
+	}
+}
+
 // A clock that reads earlier than the last look (stepped back; threads of an
 // emulated CPU disagreeing) is not "checked recently": the files are looked at.
 // Seen once on s390x under qemu, where recheck was 0 and elapsed was negative.

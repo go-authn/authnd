@@ -27,7 +27,10 @@ defaults change behaviour** (see below).
   60s, `"0"` for none): the error names the stage and the source. (#68)
 - **The TLS certificate is read again** when `cert_file`/`key_file` change
   (checked on the first handshake after 5 s) and on SIGHUP; a pair that does
-  not load keeps the served one and is logged once. (#68)
+  not load keeps the served one and is logged once. (#68) The files are
+  identified by the SHA-256 of their content, not by size, modification time
+  and inode, which can collide for a same-size pair rewritten within one
+  timestamp tick; a clock stepping back also triggers a look.
 
 Chaos run for this release (tests in `limits_test.go`, `certs_test.go`): a
 flood of 200 connections over a cap of 20, a source that never answers (40
