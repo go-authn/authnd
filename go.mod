@@ -4,9 +4,9 @@ go 1.27.3
 
 require (
 	github.com/go-asn1-ber/asn1-ber v1.5.8
-	github.com/go-authn/directory v0.16.0
+	github.com/go-authn/directory v0.17.0
 	github.com/go-authn/kdc v0.4.3
-	github.com/go-authn/ldap v0.11.3
+	github.com/go-authn/ldap v0.12.0
 	github.com/go-authn/mfa v0.5.0
 	github.com/go-authn/oidc v0.4.3
 	github.com/go-authn/totp v0.4.2
@@ -26,6 +26,7 @@ require (
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/apparentlymart/go-textseg/v17 v17.0.1 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
+	github.com/glauth/ldap v0.0.0-20260718202943-34c5f9b3cbf1 // indirect
 	github.com/go-ldap/ldap/v3 v3.4.15 // indirect
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect

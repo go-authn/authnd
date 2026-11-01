@@ -535,6 +535,35 @@ large for one LDAP message (about 3 MiB, one 10 MB attribute value is enough) is
 startup and by `check`. v0.13.4 had no refresh and needed a restart for any
 change to a group; v0.14.0 does not.
 
+### Limits, an upstream outage, and a renewed certificate (v0.15.0)
+
+Four top-level keys bound what a client, or a slow source, can cost. `authnd
+check` prints the values in force (`limits: 4096 connections, no limit per
+address; an operation may take 30s; startup may take 1m0s`).
+
+| key | default | meaning |
+|---|---|---|
+| `max_connections` | `4096` | connections held at once; over it a connection is sent a notice of disconnection (RFC 4511 4.4.1, result code busy) and closed. `0` = no limit. Lower it under a small `ulimit -n`. |
+| `max_connections_per_ip` | `0` (none) | per remote address; must not exceed `max_connections`. Behind a NAT or a proxy every client is one address: leave it unset. |
+| `operation_timeout` | `"30s"` | one LDAP operation. At the deadline the library answers `timeLimitExceeded` (3) for a handler that is still running; a bind waiting on an upstream directory is answered `unavailable` (52) a tenth earlier. `"0"` = no limit. |
+| `startup_timeout` | `"60s"` | opening and first reading every source. On expiry authnd exits with an error naming the stage and the source (`startup did not finish within 60s (startup_timeout): reading the people of ldap ldap://... did not answer`). `"0"` = no limit. |
+
+**An outage is not a wrong password.** When the directory that holds a
+password (an `ldap` source) cannot be asked, because the connection is refused,
+reset or cut mid-bind, the upstream answers busy, unavailable or other, or it
+does not answer within `operation_timeout`, the bind is answered
+**`unavailable` (52)**, not `invalidCredentials` (49), and the cause goes to the
+log only. A wrong password is still 49. The same holds for the old password of
+a password change and for the password factor of a second factor. Built on
+go-authn/directory v0.17.0 (`ErrUnavailable`) and go-authn/ldap v0.12.0.
+
+**The TLS certificate is read again when `cert_file` or `key_file` change** (size,
+modification time or inode, checked on the first handshake after 5 s, and on
+`SIGHUP`), so a renewed certificate (ACME) needs no restart. A pair that does
+not load (garbage, half a renewal, a key that does not match) keeps the one
+being served and is logged once. The configuration and the keytab are still
+read at startup only; `SIGHUP` does not reload them.
+
 ### Changing a password proves the old one
 
 A person may change their own password, and nobody else's, through the RFC 3062

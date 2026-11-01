@@ -185,7 +185,7 @@ func (s *server) BindSASL(ctx context.Context, sess ldap.Session, req *ldap.Bind
 	}
 
 	if s.wantsCode() {
-		res, err := s.decide(name, tokenFactors(tok))
+		res, err := s.decide(ctx, name, tokenFactors(tok))
 		if err != nil || res.Code != ldap.Success {
 			return ldap.SASLResult{Result: res}, err
 		}

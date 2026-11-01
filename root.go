@@ -112,7 +112,7 @@ func serve(cmd *cobra.Command, o *options, args []string) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	defer survive(syscall.SIGHUP, cmd.OutOrStdout())()
+	defer survive(syscall.SIGHUP, cmd.OutOrStdout(), srv.reloadCert)()
 	return runUntil(ctx, cmd.OutOrStdout(), srv)
 }
 
@@ -124,7 +124,10 @@ func serve(cmd *cobra.Command, o *options, args []string) error {
 // directory down for good. authnd reads its configuration, certificate and
 // keytab once, so there is nothing to reload; it says that, and stays up.
 // The returned function stops catching.
-func survive(sig os.Signal, out io.Writer) func() {
+//
+// Since v0.15.0 the signal also asks for the TLS certificate to be read again
+// (the hooks); the configuration and the keytab are still read at startup only.
+func survive(sig os.Signal, out io.Writer, hooks ...func()) func() {
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, sig)
 	done := make(chan struct{})
@@ -132,7 +135,10 @@ func survive(sig os.Signal, out io.Writer) func() {
 		for {
 			select {
 			case <-ch:
-				fmt.Fprintf(out, "%v: authnd does not reload; restart it to apply a changed configuration, certificate or keytab\n", sig)
+				fmt.Fprintf(out, "%v: authnd does not reload its configuration or keytab; restart it to apply those (the TLS certificate is read again)\n", sig)
+				for _, h := range hooks {
+					h()
+				}
 			case <-done:
 				return
 			}
@@ -193,7 +199,11 @@ func report(cmd *cobra.Command, cfg *config) error {
 		return err
 	}
 
-	fmt.Fprintf(out, "%s://%s, base %s\n\n", srv.scheme(), cfg.Listen, cfg.BaseDN)
+	fmt.Fprintf(out, "%s://%s, base %s\n", srv.scheme(), cfg.Listen, cfg.BaseDN)
+	for _, l := range cfg.limitLines() {
+		fmt.Fprintln(out, l)
+	}
+	fmt.Fprintln(out)
 	// What the site added to the schema and what each source declares, before
 	// the tables whose PUBLISHED AS column shows the declared classes.
 	if lines := srv.schemaLines(); len(lines) > 0 {

@@ -80,6 +80,9 @@ type server struct {
 
 	ldap *ldap.Server
 	ln   net.Listener
+	// certs serves the TLS certificate and reads it again when it changes;
+	// nil without cert_file (certs.go).
+	certs *certStore
 
 	// oidc is the token half, present only when the configuration asks for
 	// one. Without it this server does not implement ldap.SASLBinder's
@@ -183,34 +186,35 @@ func open(cfg *config, out io.Writer) (*server, error) {
 	s.local = &liveSource{}
 	s.local.p.Store(local)
 	s.dir = directory.NewSet(s.local)
-	srcs, err := hcldir.OpenAll(cfg.Directories)
+	var people *roster
+	var groups *groupSnapshot
+	err = s.startup(func(stage func(string)) error {
+		stage("opening " + sourceNames(cfg.Directories))
+		srcs, err := hcldir.OpenAll(cfg.Directories)
+		if err != nil {
+			return err
+		}
+		for _, src := range srcs {
+			s.dir.Add(src)
+		}
+		stage("reading the people of " + s.dir.Describe())
+		ids, err := s.dir.Identities()
+		if err != nil {
+			return err
+		}
+		if people, err = newRoster(ids, local.People...); err != nil {
+			return err
+		}
+		// Every group is read here too, before anything listens: a groups query
+		// that fails refuses startup, as a people query does.
+		stage("reading the groups of " + s.dir.Describe())
+		if groups, err = readGroups(s.dir, ids); err != nil {
+			return err
+		}
+		return s.checkConfigGroups(people)
+	})
 	if err != nil {
-		s.dir.Close()
-		return nil, err
-	}
-	for _, src := range srcs {
-		s.dir.Add(src)
-	}
-	ids, err := s.dir.Identities()
-	if err != nil {
-		s.dir.Close()
-		return nil, err
-	}
-	people, err := newRoster(ids, local.People...)
-	if err != nil {
-		s.dir.Close()
-		return nil, err
-	}
-	// Every group is read here too, before anything listens: a groups query
-	// that fails refuses startup, as a people query does.
-	groups, err := readGroups(s.dir, ids)
-	if err != nil {
-		s.dir.Close()
-		return nil, err
-	}
-	if err := s.checkConfigGroups(people); err != nil {
-		s.dir.Close()
-		return nil, err
+		return nil, err // startup closed s.dir
 	}
 	s.snap.Store(newSnapshot(people, groups, s.now()))
 	return s, nil
@@ -296,9 +300,15 @@ func (s *server) listen() error {
 	// the attribute selection and the root DSE. What is left here is the
 	// only part that is ours -- who may bind, who may read, and what this
 	// directory publishes about each person.
+	lim := s.cfg.limits()
 	srv := &ldap.Server{
 		Bind:   s,
 		Search: s,
+		// Limits (limits.go): a flood is refused with busy at the cap, an
+		// operation is answered at its deadline whatever the source is doing.
+		MaxConnections:      lim.maxConns,
+		MaxConnectionsPerIP: lim.perIP,
+		Timeout:             lim.operation,
 		// ⛔ Modify and the RFC 3062 extended operation only. add, delete
 		// and modifyDN exist in the library and are deliberately not wired:
 		// this server edits a password in a file it owns, and nothing else
@@ -326,12 +336,15 @@ func (s *server) listen() error {
 		return err
 	}
 	if s.cfg.tls() {
-		cert, err := s.loadCert()
+		store, err := newCertStore(s.cfg.CertFile, s.cfg.KeyFile, s.out)
 		if err != nil {
 			ln.Close()
 			return err
 		}
-		cfg := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+		s.certs = store
+		// GetCertificate, not Certificates: the pair is read again when the
+		// files change (certs.go), with no restart.
+		cfg := &tls.Config{GetCertificate: store.get, MinVersion: tls.VersionTLS12}
 		srv.TLSConfig = cfg
 		// ⛔ StartTLS is asked for by the CLIENT, so offering it promises
 		// nothing. RequireTLS makes the library refuse every operation until
@@ -381,6 +394,13 @@ func (s *server) listen() error {
 		fmt.Fprintln(s.out, l)
 	}
 	return nil
+}
+
+// reloadCert reads the TLS certificate again now (SIGHUP).
+func (s *server) reloadCert() {
+	if s.certs != nil {
+		s.certs.Reload()
+	}
 }
 
 // loadCert reads cert_file and key_file. Shared with `check`, so that check
@@ -463,7 +483,7 @@ func (s *server) Binds() int {
 }
 
 // Bind proves somebody, or does not.
-func (s *server) Bind(_ context.Context, _ ldap.Session, req *ldap.BindRequest) (ldap.Result, error) {
+func (s *server) Bind(ctx context.Context, _ ldap.Session, req *ldap.BindRequest) (ldap.Result, error) {
 	s.mu.Lock()
 	s.binds++
 	s.mu.Unlock()
@@ -510,7 +530,7 @@ func (s *server) Bind(_ context.Context, _ ldap.Session, req *ldap.BindRequest) 
 			// counted against it, and a DN in another case is the same
 			// reader, not a fresh one with a clean slate.
 			reader := strings.ToLower(bindDN)
-			return s.bindWithCode(reader, password, s.readerFactors(reader, want))
+			return s.bindWithCode(ctx, reader, password, s.readerFactors(reader, want))
 		}
 		// Constant time: the comparison is against a secret, and the
 		// difference between "wrong at byte 1" and "wrong at byte 12" is
@@ -541,26 +561,45 @@ func (s *server) Bind(_ context.Context, _ ldap.Session, req *ldap.BindRequest) 
 			s.refused(name, err)
 			return ldap.Result{Code: ldap.InvalidCredentials}, nil
 		}
-		return s.decide(name, factors)
+		return s.decide(ctx, name, factors)
 	}
 	// The identity answers, whichever way its source can: a comparison here,
 	// or a bind against the directory that holds the password and will not
 	// give it up.
-	if err := verifyPassword(id, password); err != nil {
-		return ldap.Result{Code: ldap.InvalidCredentials}, nil
+	vctx, cancel := s.bindBudget(ctx)
+	defer cancel()
+	if err := verifyWithin(vctx, id, password); err != nil {
+		return s.verdict(name, err), nil
 	}
 	return ldap.Result{Code: ldap.Success}, nil
 }
 
+// verdict is the LDAP answer to a password check that did not succeed.
+//
+// ⛔ A source that could not be ASKED is not a source that said NO. Answering
+// invalidCredentials (49) to an outage made every person doubt a password that
+// was right, sent clients into retry-with-the-old-password loops, and counted
+// the directory's failure against their lockout. RFC 4511 appendix A.2:
+// unavailable (52) is "a subsystem necessary to complete the operation is
+// offline"; 49 is the only code that says the credentials are wrong. The cause
+// goes to the server's own output, never to the client: it can name a host.
+func (s *server) verdict(who string, err error) ldap.Result {
+	if outage(err) {
+		s.refused(who, err)
+		return ldap.Refuse(ldap.Unavailable, "the directory that holds this password cannot be asked right now; try again later")
+	}
+	return ldap.Result{Code: ldap.InvalidCredentials}
+}
+
 // bindWithCode is the reader's version: the same policy, over a password this
 // server holds rather than an identity a directory answers for.
-func (s *server) bindWithCode(who, given string, make func(string) ([]mfa.Factor, error)) (ldap.Result, error) {
+func (s *server) bindWithCode(ctx context.Context, who, given string, make func(string) ([]mfa.Factor, error)) (ldap.Result, error) {
 	factors, err := make(given)
 	if err != nil {
 		s.refused(who, err)
 		return ldap.Result{Code: ldap.InvalidCredentials}, nil
 	}
-	return s.decide(who, factors)
+	return s.decide(ctx, who, factors)
 }
 
 // decide asks the policy and turns its answer into an LDAP result.
@@ -568,11 +607,21 @@ func (s *server) bindWithCode(who, given string, make func(string) ([]mfa.Factor
 // The client is told one thing -- invalid credentials -- whichever factor
 // refused. WHICH one is a fact about the account, and telling somebody who has
 // not proved anything narrows their next guess.
-func (s *server) decide(who string, factors []mfa.Factor) (ldap.Result, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+func (s *server) decide(parent context.Context, who string, factors []mfa.Factor) (ldap.Result, error) {
+	ctx, cancel := s.bindBudget(parent)
 	defer cancel()
 	r, err := mfa.Verify(ctx, s.policy, factors...)
 	if err != nil {
+		// A factor whose source could not be asked is an outage, not a wrong
+		// answer (see verdict).
+		for _, a := range r.Answers {
+			if outage(a.Err) {
+				return s.verdict(who, a.Err), nil
+			}
+		}
+		if outage(err) || (ctx.Err() != nil && parent.Err() == nil) {
+			return s.verdict(who, directory.AsUnavailable(err)), nil
+		}
 		// The RESULT carries what each factor said, and a factor that could
 		// not be asked keeps its reason in its own error -- mfa's summary
 		// renders that as "not available", which is true and not actionable.
@@ -821,7 +870,15 @@ func (s *server) provesPassword(target, old string, haveOld bool) (*directory.Id
 		return nil, ldap.Refuse(ldap.InsufficientAccessRights,
 			"a password change must send the old password with the new one"), false
 	}
-	if err := id.Verify(old); err != nil {
+	vctx, cancel := s.bindBudget(context.Background())
+	defer cancel()
+	if err := verifyWithin(vctx, id, old); err != nil {
+		if outage(err) {
+			// The source could not be asked: not "the old password is wrong".
+			s.refused(target, err)
+			return nil, ldap.Refuse(ldap.Unavailable,
+				"the directory that holds this password cannot be asked right now; try again later"), false
+		}
 		fmt.Fprintf(s.out, "%s's password change was refused: the old password did not verify: %v\n", target, err)
 		return nil, ldap.Refuse(ldap.UnwillingToPerform,
 			"the old password sent is not the current one"), false

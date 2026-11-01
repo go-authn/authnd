@@ -3,11 +3,42 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
-## Unreleased
+## v0.15.0 — 2026-11-01
 
-CI only. The toolchain now comes from go.mod (`go-version-file`, where several
-jobs each named `1.27.3`) and a `govulncheck ./...` job fails the build on any
-finding. No code change, no release.
+Availability and security, for production. Builds on go-authn/ldap v0.12.0 and
+go-authn/directory v0.17.0. New configuration keys, all optional; **two of the
+defaults change behaviour** (see below).
+
+- **An upstream outage is `unavailable` (52), never `invalidCredentials`
+  (49).** A password check against an `ldap` source whose connection is
+  refused, reset, cut mid-bind, answers busy/unavailable/other, or does not
+  answer within `operation_timeout` used to be reported as a wrong password. It
+  now is not, for the simple bind, the old password of a password change and
+  the password factor of an `mfa` bind. A wrong password is still 49. The
+  cause goes to the log, not to the client. (#68)
+- **Connection and operation limits** (#67): `max_connections` (default
+  **4096**; was unlimited), `max_connections_per_ip` (default none),
+  `operation_timeout` (default **30s**; was none). A connection over the cap is
+  sent busy and closed; an operation still running at the deadline is answered
+  `timeLimitExceeded`, even when its handler is blocked. `authnd check` prints
+  them. Set `max_connections = 0` or `operation_timeout = "0"` for the old
+  behaviour.
+- **Startup against a slow source is bounded** by `startup_timeout` (default
+  60s, `"0"` for none): the error names the stage and the source. (#68)
+- **The TLS certificate is read again** when `cert_file`/`key_file` change
+  (checked on the first handshake after 5 s) and on SIGHUP; a pair that does
+  not load keeps the served one and is logged once. (#68)
+
+Chaos run for this release (tests in `limits_test.go`, `certs_test.go`): a
+flood of 200 connections over a cap of 20, a source that never answers (40
+concurrent binds all answered 52 within the deadline, goroutines back to
+baseline), an ldap upstream reset or killed mid-bind, a certificate replaced by
+garbage, by nothing, by half a renewal. PostgreSQL is not covered; see the pull
+request.
+
+CI only (also in this release). The toolchain now comes from go.mod
+(`go-version-file`, where several jobs each named `1.27.3`) and a
+`govulncheck ./...` job fails the build on any finding.
 
 ## v0.14.1 — 2026-10-31
 
