@@ -130,21 +130,17 @@ type knowledge struct {
 func (k *knowledge) Name() string   { return k.name }
 func (k *knowledge) Kind() mfa.Kind { return mfa.Knowledge }
 
-func (k *knowledge) Verify(context.Context) error {
+func (k *knowledge) Verify(ctx context.Context) error {
 	k.once.Do(func() {
 		if k.verify == nil {
 			k.err = mfa.Unavailable(fmt.Errorf("nothing here can check a password for this person"))
 			return
 		}
-		k.err = k.verify(k.given)
+		// Bounded by the bind's deadline: a source that does not answer is an
+		// outage (directory.ErrUnavailable), see verifyWithin.
+		k.err = within(ctx, func() error { return k.verify(k.given) })
 	})
 	return k.err
-}
-
-// verifyPassword is the one-factor path: no policy, no code, just the
-// identity's own check.
-func verifyPassword(id *directory.Identity, given string) error {
-	return id.Verify(given)
 }
 
 // constantTimeEqual is used where the comparison is against something this

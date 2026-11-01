@@ -101,6 +101,17 @@ type config struct {
 	// answer unavailable instead (refresh.go).
 	Refresh string `hcl:"refresh,optional"`
 	MaxAge  string `hcl:"max_age,optional"`
+
+	// MaxConnections and MaxConnectionsPerIP bound the connections held at
+	// once (default 4096 and no per-address limit; 0 means no limit).
+	// OperationTimeout bounds one LDAP operation (default "30s"; a bind that
+	// waits on an upstream directory past it is answered unavailable, 52).
+	// StartupTimeout bounds opening and first reading the sources (default
+	// "60s"). See limits.go.
+	MaxConnections      *int   `hcl:"max_connections,optional"`
+	MaxConnectionsPerIP *int   `hcl:"max_connections_per_ip,optional"`
+	OperationTimeout    string `hcl:"operation_timeout,optional"`
+	StartupTimeout      string `hcl:"startup_timeout,optional"`
 }
 
 // An mfaBlock asks for more than a password at a bind.
@@ -263,6 +274,9 @@ func (c *config) check() error {
 		return fmt.Errorf("listen: %q is not an address to listen on: %w", c.Listen, err)
 	}
 	if err := c.checkRefresh(); err != nil {
+		return err
+	}
+	if err := c.checkLimits(); err != nil {
 		return err
 	}
 	if c.BaseDN == "" {
