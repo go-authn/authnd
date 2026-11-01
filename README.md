@@ -557,8 +557,8 @@ log only. A wrong password is still 49. The same holds for the old password of
 a password change and for the password factor of a second factor. Built on
 go-authn/directory v0.17.0 (`ErrUnavailable`) and go-authn/ldap v0.12.0.
 
-**The TLS certificate is read again when `cert_file` or `key_file` change** (size,
-modification time or inode, checked on the first handshake after 5 s, and on
+**The TLS certificate is read again when `cert_file` or `key_file` change** (their
+content, checked on the first handshake after 5 s, and on
 `SIGHUP`), so a renewed certificate (ACME) needs no restart. A pair that does
 not load (garbage, half a renewal, a key that does not match) keeps the one
 being served and is logged once. The configuration and the keytab are still
