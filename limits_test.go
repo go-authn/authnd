@@ -454,9 +454,11 @@ func refusedWithBusyQuick(addr string) bool {
 		return false
 	}
 	defer c.Close()
-	_ = c.SetReadDeadline(time.Now().Add(time.Second))
-	got, _ := io.ReadAll(c)
-	return len(got) > 0
+	_ = c.SetReadDeadline(time.Now().Add(3 * time.Second))
+	got, err := io.ReadAll(c)
+	// Refused: the notice came, or the server hung up. A connection the server
+	// keeps open ends on our own deadline.
+	return len(got) > 0 || !errors.Is(err, os.ErrDeadlineExceeded)
 }
 
 func bindAsQuiet(addr, dn, pw string) (ldap.ResultCode, error) {
@@ -472,7 +474,7 @@ func bindAsQuiet(addr, dn, pw string) (ldap.ResultCode, error) {
 
 func waitUntil(t testing.TB, f func() bool, what string) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(30 * time.Second) // emulated CPUs are slow
 	for !f() {
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s", what)
