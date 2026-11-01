@@ -83,7 +83,9 @@ func newCertStore(certFile, keyFile string, out io.Writer) (*certStore, error) {
 func (s *certStore) get(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.now().Sub(s.checked) >= s.recheck {
+	// A negative elapsed time (a clock stepped back, an emulated CPU whose
+	// threads disagree by a few nanoseconds) is not "recently checked": look.
+	if d := s.now().Sub(s.checked); d >= s.recheck || d < 0 {
 		s.reloadLocked(false)
 	}
 	return s.cert, nil

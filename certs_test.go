@@ -174,6 +174,24 @@ func TestChaosCertificateReplacedWithGarbage(t *testing.T) {
 	}
 }
 
+// A clock that reads earlier than the last look (stepped back; threads of an
+// emulated CPU disagreeing) is not "checked recently": the files are looked at.
+// Seen once on s390x under qemu, where recheck was 0 and elapsed was negative.
+func TestCertificateRecheckSurvivesAClockStepBack(t *testing.T) {
+	r, certPath, keyPath := tlsServer(t)
+	r.srv.certs.mu.Lock()
+	back := r.srv.certs.checked.Add(-time.Second)
+	r.srv.certs.now = func() time.Time { return back }
+	r.srv.certs.recheck = 0
+	r.srv.certs.mu.Unlock()
+	c2, k2 := pairPEM(t, 2)
+	renameOver(t, certPath, c2)
+	renameOver(t, keyPath, k2)
+	if got := serialServed(t, r.addr); got != 2 {
+		t.Fatalf("with the clock behind the last look, serial %d", got)
+	}
+}
+
 // SIGHUP's hook reads the files now, whatever the recheck period.
 func TestReloadCertOnDemand(t *testing.T) {
 	r, certPath, keyPath := tlsServer(t)
