@@ -5,7 +5,7 @@ go 1.27.3
 require (
 	github.com/go-asn1-ber/asn1-ber v1.5.8
 	github.com/go-authn/directory v0.17.0
-	github.com/go-authn/kdc v0.4.3
+	github.com/go-authn/kdc v0.5.0
 	github.com/go-authn/ldap v0.12.0
 	github.com/go-authn/mfa v0.5.0
 	github.com/go-authn/oidc v0.4.3
@@ -46,7 +46,7 @@ require (
 	github.com/zclconf/go-cty v1.19.0 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/mod v0.42.0 // indirect
-	golang.org/x/net v0.61.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
