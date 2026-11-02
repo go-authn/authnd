@@ -3,6 +3,22 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.15.1 — 2026-11-02
+
+Kerberos, from go-authn/kdc v0.4.3 to v0.5.0. No configuration change.
+
+- **A retransmitted Kerberos request gets the reply it already had** (MIT's
+  lookaside, ported): a client that lost a UDP reply and sends the same bytes
+  again is answered at once, without the directory being read again. Entries
+  last two minutes, 10 MiB in all; an error is never stored, so a client told
+  the KDC is unavailable is served afresh once the directory is back.
+- **A directory outage is never a wrong password on the KDC** (#74): it is
+  `KDC_ERR_SVC_UNAVAILABLE` on AS and TGS, also for a correct password, so it
+  cannot count against a lockout. An `ldap` upstream is never asked by
+  Kerberos at all: its people are verifiers, and Kerberos needs the key, so they
+  get `KDC_ERR_NULL_KEY`. Pinned by tests in go-authn/kdc; no code change here.
+- Dependencies: golang.org/x/net v0.61.0 to v0.62.0.
+
 ## v0.15.0 — 2026-11-01
 
 Availability and security, for production. Builds on go-authn/ldap v0.12.0 and
