@@ -3,6 +3,37 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.16.0 — 2026-11-05
+
+Security audit 2026-11-05. **Breaking for a deployment with an `oidc` block.**
+
+### A token's name must be scoped: `oidc { domains = [...] }` is required
+
+Behind a federation proxy (eduGAIN through MyAccessID, eduTEAMS, a Keycloak
+broker) one issuer vouches for people of many institutions. The server mapped
+an unscoped `preferred_username` straight onto directory names, so any
+institution's "alice" bound as the local alice.
+
+- `oidc { domains = ["univ-a.example"] }` lists the scopes the issuer may
+  assert. The token's name must be exactly one `local@scope` of one of them
+  (go-authn/oidc `ScopedName`); an unscoped name, another institution's, or one
+  with two `@` is refused. **The server does not start with an `oidc` block and
+  no `domains`.**
+- `oidc { local_domain = "univ-a.example" }` (optional, one of `domains`): the
+  scope whose people are published here under their bare local part. Other
+  scopes are looked up as the whole `local@scope` name.
+- Dependencies: go-authn/oidc v0.4.3 to v0.6.1 (a name with more than one `@`
+  is refused), go-authn/directory to v0.18.0 (two entries sharing a uid in one
+  source are an error at startup and refresh, not a silent pick).
+
+Upgrade: add `domains = ["<your domain>"]` to the `oidc` block, and set
+`username_claim = "eduperson_principal_name"` (or whichever claim your issuer
+fills with `local@scope`); if your directory names are bare (`alice`), add
+`local_domain = "<your domain>"`. A token whose name is unscoped (a plain
+`preferred_username`, `sub`) can no longer bind: configure the issuer to
+release a scoped claim. Look for repeated uids in an LDAP upstream before
+upgrading: `ldapsearch -b <base> '(uid=*)' uid`.
+
 ## v0.15.1 — 2026-11-02
 
 Kerberos, from go-authn/kdc v0.4.3 to v0.5.0. No configuration change.

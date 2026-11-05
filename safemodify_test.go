@@ -172,7 +172,7 @@ func TestATokenBoundSessionMustStillProveThePassword(t *testing.T) {
 	c := client(t, r)
 	defer c.Close()
 	step, err := c.BindSASL(oauthBearer, oauthBearerCredentials("",
-		p.token(t, map[string]any{"preferred_username": "alice"})))
+		p.token(t, map[string]any{"preferred_username": "alice@univ-a.example"})))
 	if err != nil || step.Code != ldap.Success {
 		t.Fatalf("the token bind: %s %v\n%s", step.Code, err, r.out.String())
 	}
@@ -203,7 +203,7 @@ func TestNoFirstPasswordFromAToken(t *testing.T) {
 	c := client(t, r)
 	defer c.Close()
 	step, err := c.BindSASL(oauthBearer, oauthBearerCredentials("",
-		p.token(t, map[string]any{"preferred_username": "olga"})))
+		p.token(t, map[string]any{"preferred_username": "olga@univ-a.example"})))
 	if err != nil || step.Code != ldap.Success {
 		t.Fatalf("the token bind: %s %v\n%s", step.Code, err, r.out.String())
 	}

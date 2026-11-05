@@ -116,10 +116,12 @@ user "alice" { password = "hunter2" }
 oidc {
   issuer   = %q
   audience = "ldap"
+  domains  = ["univ-a.example"]
+  local_domain = "univ-a.example"
 }
 `, hclPath(cert), hclPath(key), p.issuer()))
 
-	tok := p.token(t, map[string]any{"preferred_username": "alice"})
+	tok := p.token(t, map[string]any{"preferred_username": "alice@univ-a.example"})
 
 	// Before the upgrade: refused, for the TRANSPORT and not the token.
 	before, _ := client(t, r).BindSASL(oauthBearer, oauthBearerCredentials("", tok))

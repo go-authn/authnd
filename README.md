@@ -717,13 +717,30 @@ oidc {
   issuer   = "https://login.example.org/realms/staff"
   audience = "ldap"
 
-  # Which claim names the person in THIS directory. The default order is
-  # preferred_username, then email when email_verified is true, then sub.
-  username_claim = "preferred_username"
+  # Which claim names the person. The default order is preferred_username,
+  # then email when email_verified is true, then sub. The name must be ONE
+  # local@scope (eduperson_principal_name, voperson_id).
+  username_claim = "eduperson_principal_name"
+
+  # REQUIRED: the scopes this issuer may assert. A name of any other scope,
+  # an unscoped name, or one with two "@" is refused (go-authn/oidc ScopedName).
+  domains = ["univ-a.example"]
+
+  # Optional, one of domains: the scope whose people are published here under
+  # their bare local part (uid "alice" for alice@univ-a.example). Any other
+  # scope is looked up as the whole name ("alice@univ-b.example").
+  local_domain = "univ-a.example"
 
   # jwks_url skips discovery, for a provider that does not publish it.
 }
 ```
+
+**`domains` is required** (from v0.16.0; the server does not start without it).
+Behind a federation proxy (eduGAIN through MyAccessID, eduTEAMS, a Keycloak
+broker) one issuer vouches for people of many institutions, and "alice" at
+another university is not this directory's alice. Before, an unscoped
+`preferred_username` was mapped straight onto directory names, so any
+institution's alice bound as the local alice.
 
 On one listener, at the same time, tess still types her password with this
 second's code on the end of it, and alice sends a token. Neither arrangement
@@ -749,6 +766,8 @@ disbelieving it about *how* it checked.
   it off the wire is that person until it expires. `allow_plaintext = true`
   exists for a deployment that terminates TLS in front of this process, which
   is a statement only that deployment can make.
+- **A name that is not one `local@scope` of an allowed domain**: unscoped,
+  another institution's, or with more than one `@`.
 - **A request to be somebody else.** The GS2 header may name an `authzid`. A
   token for alice carrying a request to act as bob is refused, not quietly
   treated as either.

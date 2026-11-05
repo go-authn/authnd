@@ -55,6 +55,17 @@ type oidcBlock struct {
 	// UsernameClaim is which claim names the person in THIS directory.
 	// go-authn/oidc's default order is preferred_username, email, sub.
 	UsernameClaim string `hcl:"username_claim,optional"`
+	// Domains are the scopes (the "scope" of "local@scope") this issuer may
+	// assert: required. The name a token carries must be exactly one
+	// local@scope with a scope in this list (go-authn/oidc ScopedName), so that
+	// behind a federation proxy another institution's "alice" is not this
+	// directory's alice.
+	Domains []string `hcl:"domains,optional"`
+	// LocalDomain, one of Domains, is the scope whose people are published here
+	// under their bare local part (the directory has "alice", the token says
+	// "alice@univ-a.example"). Every other scope is looked up as the whole
+	// local@scope name.
+	LocalDomain string `hcl:"local_domain,optional"`
 
 	// AllowPlaintext lets a token be accepted over a connection that is not
 	// encrypted.
@@ -88,6 +99,22 @@ func openOIDC(b *oidcBlock) (*oidcAuth, error) {
 	if b == nil {
 		return nil, nil
 	}
+	// ⛔ No domain, no OIDC: an unscoped name from a token says nothing about
+	// whose "alice" it is, and a federation proxy puts every institution's
+	// alice behind one issuer. Refused at startup, where somebody is watching.
+	if len(b.Domains) == 0 {
+		return nil, fmt.Errorf("oidc %q: domains is required: the scopes this issuer may assert, e.g. domains = [\"univ-a.example\"]", b.Issuer)
+	}
+	for _, d := range b.Domains {
+		if _, err := oidc.ScopedName("x@"+d, []string{d}, ""); err != nil {
+			return nil, fmt.Errorf("oidc %q: domains: %q is not a scope: %w", b.Issuer, d, err)
+		}
+	}
+	if b.LocalDomain != "" {
+		if _, err := oidc.ScopedName("x@"+b.LocalDomain, b.Domains, ""); err != nil {
+			return nil, fmt.Errorf("oidc %q: local_domain %q must be one of domains: %w", b.Issuer, b.LocalDomain, err)
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	v, err := oidc.New(ctx, oidc.Config{
@@ -104,6 +131,25 @@ func openOIDC(b *oidcBlock) (*oidcAuth, error) {
 		verifier:  v,
 		discovery: strings.TrimSuffix(b.Issuer, "/") + "/.well-known/openid-configuration",
 	}, nil
+}
+
+// directoryName is the name this directory publishes a scoped person under:
+// the bare local part for the local domain, the whole local@scope otherwise.
+// scoped is the result of oidc.ScopedName, so it holds exactly one "@".
+func (a *oidcAuth) directoryName(scoped string) string {
+	if a.cfg.LocalDomain != "" {
+		if local, ok := strings.CutSuffix(scoped, "@"+strings.ToLower(strings.TrimSuffix(a.cfg.LocalDomain, "."))); ok {
+			return local
+		}
+	}
+	return scoped
+}
+
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
 }
 
 // BindSASL answers a SASL bind, which for this server means OAUTHBEARER.
@@ -158,16 +204,24 @@ func (s *server) BindSASL(ctx context.Context, sess ldap.Session, req *ldap.Bind
 		return s.oidcChallenge("invalid_token"), nil
 	}
 
-	name := tok.Username()
-	if name == "" {
+	scoped := tok.Username()
+	if scoped == "" {
 		s.refused("a token", fmt.Errorf("the token names nobody: no %s, email or sub", s.oidc.cfg.UsernameClaim))
 		return s.oidcChallenge("invalid_token"), nil
 	}
+	// The name must be local@scope with a scope the issuer may assert.
+	// Unscoped is refused (no default scope): "alice" of which institution?
+	scoped, err = oidc.ScopedName(scoped, s.oidc.cfg.Domains, "")
+	if err != nil {
+		s.refused("a token", fmt.Errorf("the name %q: %w", truncate(tok.Username(), 64), err))
+		return s.oidcChallenge("invalid_token"), nil
+	}
+	name := s.oidc.directoryName(scoped)
 	// ⛔ The GS2 header may name somebody to act AS, which is a different
 	// request from "this is me" -- RFC 5801 calls it the authzid. Nothing
 	// here grants it, so a token for one person carrying a request to be
 	// another is refused rather than quietly treated as the first.
-	if authzid != "" && !strings.EqualFold(authzid, name) {
+	if authzid != "" && !strings.EqualFold(authzid, name) && !strings.EqualFold(authzid, scoped) {
 		s.refused(name, fmt.Errorf("the token is for %q and asks to act as %q; this server does not delegate", name, authzid))
 		return s.oidcChallenge("insufficient_scope"), nil
 	}
@@ -176,6 +230,17 @@ func (s *server) BindSASL(ctx context.Context, sess ldap.Session, req *ldap.Bind
 		return s.oidcChallenge("invalid_token"), nil
 	}
 	id, ok := s.who()[name]
+	if !ok {
+		// ScopedName folds ASCII case (a uid is caseIgnoreMatch) and the
+		// roster refuses two names that differ only by case, so a fold match
+		// is the one person.
+		for n, cand := range s.who() {
+			if strings.EqualFold(n, name) {
+				id, ok, name = cand, true, n
+				break
+			}
+		}
+	}
 	if !ok {
 		// The token is good and the person is not here. Said to the log,
 		// because a client that learns which names exist has been handed the

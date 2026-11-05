@@ -116,6 +116,8 @@ oidc {
   issuer   = %q
   audience = "ldap"
   allow_plaintext = true
+  domains         = ["univ-a.example"]
+  local_domain    = "univ-a.example"
 %s}
 `, p.issuer(), extra)
 }
