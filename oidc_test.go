@@ -40,7 +40,7 @@ func TestATokenBindsAsThePersonItNames(t *testing.T) {
 	p := newProvider(t)
 	r := oidcServer(t, p, "", "")
 
-	tok := p.token(t, map[string]any{"preferred_username": "alice"})
+	tok := p.token(t, map[string]any{"preferred_username": "alice@univ-a.example"})
 	c := client(t, r)
 	defer c.Close()
 	step, err := c.BindSASL(oauthBearer, oauthBearerCredentials("", tok))
@@ -86,7 +86,7 @@ user "alice" { password = "hunter2" }
 
 	// alice sends a token, on the same server, under the same policy. Her
 	// provider says it checked two distinct kinds, and that is the evidence.
-	tok := p.token(t, map[string]any{"preferred_username": "alice", "amr": []string{"pwd", "otp"}})
+	tok := p.token(t, map[string]any{"preferred_username": "alice@univ-a.example", "amr": []string{"pwd", "otp"}})
 	if code, creds := bindWithToken(t, r, "", tok); code != ldap.Success {
 		t.Errorf("the token bind answered %s (%s)\n%s", code, creds, r.out.String())
 	}
@@ -96,7 +96,7 @@ func TestATokenForSomebodyThisDirectoryDoesNotHaveIsRefused(t *testing.T) {
 	p := newProvider(t)
 	r := oidcServer(t, p, "", "")
 
-	tok := p.token(t, map[string]any{"preferred_username": "mallory"})
+	tok := p.token(t, map[string]any{"preferred_username": "mallory@univ-a.example"})
 	code, creds := bindWithToken(t, r, "", tok)
 	if code == ldap.Success {
 		t.Fatal("a token for somebody nobody publishes bound")
@@ -123,7 +123,7 @@ func TestATokenSignedByTheWrongKeyIsRefused(t *testing.T) {
 		map[string]any{"alg": "RS256", "typ": "JWT", "kid": p.kid},
 		map[string]any{
 			"iss": p.issuer(), "aud": "ldap", "sub": "x",
-			"preferred_username": "alice",
+			"preferred_username": "alice@univ-a.example",
 			"iat":                time.Now().Unix(),
 			"exp":                time.Now().Add(time.Hour).Unix(),
 		})
@@ -137,7 +137,7 @@ func TestAnExpiredTokenIsRefused(t *testing.T) {
 	r := oidcServer(t, p, "", "")
 
 	tok := p.token(t, map[string]any{
-		"preferred_username": "alice",
+		"preferred_username": "alice@univ-a.example",
 		"exp":                time.Now().Add(-time.Hour).Unix(),
 		"iat":                time.Now().Add(-2 * time.Hour).Unix(),
 	})
@@ -150,7 +150,7 @@ func TestATokenForAnotherAudienceIsRefused(t *testing.T) {
 	p := newProvider(t)
 	r := oidcServer(t, p, "", "")
 
-	tok := p.token(t, map[string]any{"preferred_username": "alice", "aud": "somebody-else"})
+	tok := p.token(t, map[string]any{"preferred_username": "alice@univ-a.example", "aud": "somebody-else"})
 	if code, _ := bindWithToken(t, r, "", tok); code == ldap.Success {
 		t.Fatal("a token addressed to another service bound")
 	}
@@ -163,7 +163,7 @@ func TestATokenMayNotAskToBeSomebodyElse(t *testing.T) {
 	p := newProvider(t)
 	r := oidcServer(t, p, "", "")
 
-	tok := p.token(t, map[string]any{"preferred_username": "alice"})
+	tok := p.token(t, map[string]any{"preferred_username": "alice@univ-a.example"})
 	code, _ := bindWithToken(t, r, "bob", tok)
 	if code == ldap.Success {
 		t.Fatal("a token for alice bound while asking to be bob")
@@ -179,7 +179,7 @@ func TestAnAuthzidThatNamesTheSamePersonIsFine(t *testing.T) {
 	p := newProvider(t)
 	r := oidcServer(t, p, "", "")
 
-	tok := p.token(t, map[string]any{"preferred_username": "alice"})
+	tok := p.token(t, map[string]any{"preferred_username": "alice@univ-a.example"})
 	if code, creds := bindWithToken(t, r, "alice", tok); code != ldap.Success {
 		t.Fatalf("answered %d (%s); the server said: %s", code, creds, r.out.String())
 	}
@@ -210,7 +210,7 @@ mfa {
 		{"a method nothing here classifies", []string{"pwd", "quantum"}, false},
 	} {
 		t.Run(tc.what, func(t *testing.T) {
-			claims := map[string]any{"preferred_username": "alice"}
+			claims := map[string]any{"preferred_username": "alice@univ-a.example"}
 			if tc.amr != nil {
 				claims["amr"] = tc.amr
 			}
@@ -294,10 +294,11 @@ user "alice" { password = "hunter2" }
 oidc {
   issuer   = %q
   audience = "ldap"
+  domains  = ["univ-a.example"]
 }
 `, p.issuer()))
 
-	tok := p.token(t, map[string]any{"preferred_username": "alice"})
+	tok := p.token(t, map[string]any{"preferred_username": "alice@univ-a.example"})
 	code, _ := bindWithToken(t, r, "", tok)
 	if code != ldap.ConfidentialityRequired {
 		t.Errorf("answered %d, want confidentialityRequired (%d)", code, ldap.ConfidentialityRequired)
