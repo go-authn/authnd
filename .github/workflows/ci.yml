@@ -162,7 +162,17 @@ jobs:
           # What is left is main() and a handful of error branches. The
           # floor is RAISED, never lowered.
           FLOOR=88.0
-          go test -coverprofile=cover.out -coverpkg=./... ./... >/dev/null
+          # The output goes to a file, never to /dev/null: on #76 this step
+          # failed once with nothing but "exit code 1", the re-run passed, and
+          # the test that failed could never be named (#77). A failure prints
+          # what failed, then the end of the log.
+          if ! go test -coverprofile=cover.out -coverpkg=./... ./... > test.log 2>&1; then
+            grep -E -A40 '^(--- FAIL|FAIL|panic:|fatal error:)' test.log || true
+            echo "----- last 100 lines of go test -----"
+            tail -n 100 test.log
+            echo "::error::go test failed under -coverpkg; what failed is printed above"
+            exit 1
+          fi
           go tool cover -func=cover.out
           cov=$(go tool cover -func=cover.out | tail -1 | awk '{print $3}' | tr -d '%')
           echo "coverage: ${cov}%  floor: ${FLOOR}%  standard: 100%"
