@@ -4,11 +4,11 @@ go 1.27.3
 
 require (
 	github.com/go-asn1-ber/asn1-ber v1.5.8
-	github.com/go-authn/directory v0.18.0
+	github.com/go-authn/directory v0.19.0
 	github.com/go-authn/kdc v0.6.0
 	github.com/go-authn/ldap v0.12.1
 	github.com/go-authn/mfa v0.5.1
-	github.com/go-authn/oidc v0.6.1
+	github.com/go-authn/oidc v0.7.0
 	github.com/go-authn/totp v0.4.3
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/hashicorp/hcl/v2 v2.25.0

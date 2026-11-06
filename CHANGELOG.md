@@ -3,6 +3,22 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.18.0 — 2026-11-06
+
+- **A password check against an upstream is cancelled, not only bounded.**
+  `within()` could answer when the bind's budget ended but not stop the
+  check: `Identity.Verify` takes no context, so the goroutine and the upstream
+  connection lived until the upstream let go (go-ldap has no default timeout:
+  for ever, against an upstream that never answers). The bind and the password
+  factor now use `Identity.VerifyContext` (go-authn/directory v0.19.0), which
+  closes the upstream connection when the context ends. 400 binds against a
+  hung upstream: 1620 goroutines held (v0.16.2), 257 (v0.17.0), **4**. The cap
+  of 64 pending checks per source stays, for sources that cannot be cancelled.
+- The name folds come from go-authn/oidc v0.7.0 (`EqualASCIIFold`,
+  `ASCIILower`): one implementation, no copy in authnd.
+- Dependencies: go-authn/directory v0.18.0 to v0.19.0, go-authn/oidc v0.6.1 to
+  v0.7.0. No configuration change.
+
 ## v0.17.0 — 2026-11-06
 
 Second-pass security audit. **Breaking: `max_age` now has a default.**
