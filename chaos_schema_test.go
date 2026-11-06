@@ -41,6 +41,21 @@ func supannSized() string {
 	return b.String()
 }
 
+// nextCut is the offset after n. Every offset, except under -short: there the
+// first and last 256 are all cut and every 13th in between.
+//
+// ⛔ The architecture lanes run under qemu, where building a schema for each of
+// the 13,507 prefixes of supann-sized.schema took 9m35s on riscv64 -- and the
+// lane's 10 minute timeout failed main after #81 on a test it did not touch.
+// Those lanes are there for the architecture, so they pass -short; the full
+// sweep runs on every native lane, -race and coverage included.
+func nextCut(n, size int) int {
+	if !testing.Short() || n < 256 || n >= size-256 {
+		return n + 1
+	}
+	return min(n+13, size-256)
+}
+
 func TestChaosSchemaFileTruncatedAtEveryOffset(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string][]byte{"supann-sized.schema": []byte(supannSized())}
@@ -56,7 +71,7 @@ func TestChaosSchemaFileTruncatedAtEveryOffset(t *testing.T) {
 			t.Parallel()
 			path := filepath.Join(dir, name)
 			refused, built := 0, 0
-			for n := 0; n <= len(full); n++ {
+			for n := 0; n <= len(full); n = nextCut(n, len(full)) {
 				if err := os.WriteFile(path, full[:n], 0o600); err != nil {
 					t.Fatal(err)
 				}
