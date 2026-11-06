@@ -10,21 +10,23 @@ import (
 
 func TestRefreshAndMaxAgeConfiguration(t *testing.T) {
 	c := &config{}
-	if c.refreshEvery() != 60*time.Second || c.maxAge() != 0 {
+	if c.refreshEvery() != 60*time.Second || c.maxAge() != defaultMaxAge {
 		t.Fatalf("defaults: refresh %v, max_age %v", c.refreshEvery(), c.maxAge())
 	}
 	for _, tc := range []struct {
 		refresh, maxAge, wantErr string
 		every, max               time.Duration
 	}{
-		{"", "", "", 60 * time.Second, 0},
-		{"0", "", "", 0, 0},
+		{"", "", "", 60 * time.Second, defaultMaxAge},
+		{"0", "", "", 0, 0}, // never refreshed: nothing to age
+		{"2m", "", "", 2 * time.Minute, 20 * time.Minute},
+		{"", "0", "", 60 * time.Second, 0}, // no limit, on purpose
+		{"", "-1m", "not negative", 0, 0},
 		{"30s", "5m", "", 30 * time.Second, 5 * time.Minute},
 		{"abc", "", `refresh "abc"`, 0, 0},
 		{"-5s", "", "at least one second", 0, 0},
 		{"500ms", "", "at least one second", 0, 0},
 		{"", "soon", `max_age "soon"`, 0, 0},
-		{"", "0s", "more than zero", 0, 0},
 		{"60s", "30s", "shorter than refresh", 0, 0},
 		{"0", "30s", "", 0, 30 * time.Second},
 	} {

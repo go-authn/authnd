@@ -39,10 +39,24 @@ func (c *config) refreshEvery() time.Duration {
 	return d
 }
 
-// maxAge is how old the served data may be, zero for no limit.
+// defaultMaxAge is how long data may be served after the last good read when
+// max_age is not set: ten minutes, and never less than ten refresh periods.
+//
+// ⛔ It used to be unlimited, which made revocation fail open: a person
+// removed from a source that then became unreadable kept binding for as long as
+// the outage lasted. With refresh = "0" (never) nothing is ever read again, so
+// no age is meaningful and the default is no limit; say max_age to set one.
+const defaultMaxAge = 10 * time.Minute
+
+// maxAge is how old the served data may be, zero for no limit: max_age when
+// set ("0" is no limit on purpose), else [defaultMaxAge] while refreshing.
 func (c *config) maxAge() time.Duration {
 	if c.MaxAge == "" {
-		return 0
+		r := c.refreshEvery()
+		if r <= 0 {
+			return 0
+		}
+		return max(defaultMaxAge, 10*r)
 	}
 	d, _ := time.ParseDuration(c.MaxAge)
 	return d
@@ -63,10 +77,10 @@ func (c *config) checkRefresh() error {
 		if err != nil {
 			return fmt.Errorf("max_age %q: %w (for example \"10m\")", c.MaxAge, err)
 		}
-		if d <= 0 {
-			return fmt.Errorf("max_age %q: more than zero; leave it out for no limit", c.MaxAge)
+		if d < 0 {
+			return fmt.Errorf("max_age %q: not negative; \"0\" is no limit, leave it out for the default (%v)", c.MaxAge, defaultMaxAge)
 		}
-		if r := c.refreshEvery(); r > 0 && d < r {
+		if r := c.refreshEvery(); d > 0 && r > 0 && d < r {
 			return fmt.Errorf("max_age %q is shorter than refresh %q: the data would always be too old", c.MaxAge, r)
 		}
 	}

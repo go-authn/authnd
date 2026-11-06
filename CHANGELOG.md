@@ -3,6 +3,31 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.17.0 — 2026-11-06
+
+Second-pass security audit. **Breaking: `max_age` now has a default.**
+
+- ⛔ **`max_age` defaults to ten minutes** (at least ten `refresh` periods),
+  where it was unlimited: a person removed from a source that then became
+  unreadable kept binding for as long as the outage lasted, so revocation
+  failed open. Past `max_age` searches, people's binds and password changes
+  answer `unavailable` (52). `max_age = "0"` is now accepted and means no
+  limit, on purpose; with `refresh = "0"` the default is no limit.
+  **Upgrade:** if a source can be down for longer than ten minutes and you
+  prefer stale data to refusing, set `max_age` to what you can tolerate, or
+  `"0"`. `check` and the log say when data is too old.
+- **Unicode case folding no longer binds a different person.** The token bind
+  looked a name up with `strings.EqualFold`; `oidc.ScopedName` folds ASCII
+  only, so `Kate@univ-a.example` (Kelvin sign, a different account at the
+  issuer) bound as `kate`. The lookup and the authzid comparison now fold
+  ASCII only.
+- **A hung upstream cannot pile up checks:** at most 64 outstanding checks
+  per source; past that a bind is answered `unavailable` at once. Measured:
+  400 binds against an upstream that never answers left 1620 goroutines held,
+  now 257.
+- Dependencies: go-authn/ldap v0.12.0 to v0.12.1 (a bind abandons the paged
+  searches in progress, RFC 4511 4.2.1).
+
 ## v0.16.2 — 2026-11-06
 
 Security: **a Kerberos request no longer reads the backends.**

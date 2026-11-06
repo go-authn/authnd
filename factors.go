@@ -68,7 +68,7 @@ func (s *server) factorsFor(id *directory.Identity, given string) ([]mfa.Factor,
 		return nil, fmt.Errorf("what was typed is %d characters, and the last %d of it are the code",
 			len(given), digits)
 	}
-	pw := &knowledge{name: "your password", verify: id.Verify, given: password}
+	pw := &knowledge{name: "your password", verify: id.Verify, given: password, where: id.Where()}
 	return []mfa.Factor{pw, s.codeBehind(pw, id.Name(), id.TOTPSecret(), code)}, nil
 }
 
@@ -122,6 +122,8 @@ type knowledge struct {
 	name   string
 	verify func(string) error
 	given  string
+	// where names the source the check asks, for the cap on pending checks.
+	where string
 
 	once sync.Once
 	err  error
@@ -138,7 +140,7 @@ func (k *knowledge) Verify(ctx context.Context) error {
 		}
 		// Bounded by the bind's deadline: a source that does not answer is an
 		// outage (directory.ErrUnavailable), see verifyWithin.
-		k.err = within(ctx, func() error { return k.verify(k.given) })
+		k.err = within(ctx, k.where, func() error { return k.verify(k.given) })
 	})
 	return k.err
 }
