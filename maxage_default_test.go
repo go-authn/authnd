@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
+//go:build !nosql
+
 package main
 
 import (
