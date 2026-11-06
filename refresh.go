@@ -162,11 +162,16 @@ var errTooOld = errors.New("the directory data is older than max_age and the sou
 
 // tooOld is the answer to give when max_age has run out, and whether to give it.
 func (s *server) tooOld() (ldap.Result, bool) {
-	max := s.cfg.maxAge()
-	if max <= 0 || s.now().Sub(s.snap.Load().built) <= max {
+	if !s.dataTooOld() {
 		return ldap.Result{}, false
 	}
 	return ldap.Refuse(ldap.Unavailable, "%s", errTooOld), true
+}
+
+// dataTooOld says max_age has run out. The KDC asks it too (realmPeople).
+func (s *server) dataTooOld() bool {
+	max := s.cfg.maxAge()
+	return max > 0 && s.now().Sub(s.snap.Load().built) > max
 }
 
 // startRefresh runs the loop, unless the configuration turned it off.
