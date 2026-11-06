@@ -236,14 +236,17 @@ jobs:
             echo "::error::no qemu user emulator for $1 (looked for qemu-$1-static and qemu-$1)" >&2
             return 1
           }
+          # -short under qemu: the exhaustive chaos sweeps run on the native
+          # lanes; under emulation one of them took 9m35s of a 10m timeout and
+          # failed main on riscv64 (chaos_schema_test.go, nextCut).
           case "${{ matrix.goarch }}" in
             amd64|arm64) go test -count=1 ./... ;;
-            riscv64) e="$(qemu_for riscv64)" || exit 1; echo "running riscv64 under $e"; GOARCH=riscv64 go test -count=1 -exec="$e" ./... ;;
-            loong64) e="$(qemu_for loongarch64)" || exit 1; echo "running loong64 under $e"; GOARCH=loong64 go test -count=1 -exec="$e" ./... ;;
-            ppc64le) e="$(qemu_for ppc64le)" || exit 1; echo "running ppc64le under $e"; GOARCH=ppc64le go test -count=1 -exec="$e" ./... ;;
-            s390x) e="$(qemu_for s390x)" || exit 1; echo "running s390x under $e"; GOARCH=s390x   go test -count=1 -exec="$e" ./... ;;
+            riscv64) e="$(qemu_for riscv64)" || exit 1; echo "running riscv64 under $e"; GOARCH=riscv64 go test -short -count=1 -exec="$e" ./... ;;
+            loong64) e="$(qemu_for loongarch64)" || exit 1; echo "running loong64 under $e"; GOARCH=loong64 go test -short -count=1 -exec="$e" ./... ;;
+            ppc64le) e="$(qemu_for ppc64le)" || exit 1; echo "running ppc64le under $e"; GOARCH=ppc64le go test -short -count=1 -exec="$e" ./... ;;
+            s390x) e="$(qemu_for s390x)" || exit 1; echo "running s390x under $e"; GOARCH=s390x   go test -short -count=1 -exec="$e" ./... ;;
             # 32-bit: 386 runs natively on the amd64 runner (qemu-i386 loses float
             # state across preemption); arm under qemu.
             386)      GOARCH=386     go test -count=1 ./... ;;
-            arm) e="$(qemu_for arm)" || exit 1; echo "running arm under $e"; GOARCH=arm     go test -count=1 -exec="$e" ./... ;;
+            arm) e="$(qemu_for arm)" || exit 1; echo "running arm under $e"; GOARCH=arm     go test -short -count=1 -exec="$e" ./... ;;
           esac
