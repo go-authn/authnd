@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jcmturner/gokrb5/v8/config"
+	krbconfig "github.com/jcmturner/gokrb5/v8/config"
 	"github.com/jcmturner/gokrb5/v8/iana/errorcode"
 	"github.com/jcmturner/gokrb5/v8/iana/nametype"
 	"github.com/jcmturner/gokrb5/v8/messages"
@@ -21,7 +21,7 @@ import (
 // a password is KDC_ERR_PREAUTH_REQUIRED (25).
 func asReqCode(t *testing.T, r *running, name string) int32 {
 	t.Helper()
-	c := config.New()
+	c := krbconfig.New()
 	c.LibDefaults.DefaultTktEnctypeIDs = []int32{18}
 	req, err := messages.NewASReqForTGT(testRealm, c, types.NewPrincipalName(nametype.KRB_NT_PRINCIPAL, name))
 	if err != nil {
