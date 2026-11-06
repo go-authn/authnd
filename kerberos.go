@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 
 	"github.com/go-authn/directory"
 	"github.com/go-authn/kdc"
@@ -52,6 +53,9 @@ func (s *server) openRealm() (*realm, error) {
 // listen binds the realm's two sockets. Kerberos answers on UDP and TCP both:
 // a client tries UDP first and falls back when the reply does not fit.
 func (r *realm) listen() error {
+	if host, port, err := net.SplitHostPort(r.cfg.Listen); err == nil && port == "0" {
+		return r.listenAnyPort(host)
+	}
 	pc, err := net.ListenPacket("udp", r.cfg.Listen)
 	if err != nil {
 		return fmt.Errorf("kerberos udp %s: %w", r.cfg.Listen, err)
@@ -63,6 +67,41 @@ func (r *realm) listen() error {
 	}
 	r.pc, r.ln = pc, ln
 	return nil
+}
+
+// listenAnyPort is listen for port 0: ONE port, for UDP and TCP both.
+//
+// ⛔ Two listens on ":0" get two ports, and a krb5.conf names one. The tests
+// used to pick a port by binding UDP, closing it and naming it here; on a
+// runner that port is in the ephemeral range, so another test's outgoing
+// connection could take it in between, and the KDC failed with "tcp ...
+// address already in use" (main, after #80). Here the UDP port the kernel gave
+// is held while TCP is bound on the same number, and a number TCP cannot have
+// is given back for another.
+func (r *realm) listenAnyPort(host string) error {
+	const tries = 16
+	for range tries {
+		pc, err := net.ListenPacket("udp", net.JoinHostPort(host, "0"))
+		if err != nil {
+			return fmt.Errorf("kerberos udp %s: %w", r.cfg.Listen, err)
+		}
+		port := pc.LocalAddr().(*net.UDPAddr).Port
+		ln, err := net.Listen("tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+		if err == nil {
+			r.pc, r.ln = pc, ln
+			return nil
+		}
+		pc.Close()
+	}
+	return fmt.Errorf("kerberos %s: no port was free for both udp and tcp in %d tries", r.cfg.Listen, tries)
+}
+
+// addr is where the realm actually listens: the same port for UDP and TCP.
+func (r *realm) addr() string {
+	if r.pc == nil {
+		return r.cfg.Listen
+	}
+	return r.pc.LocalAddr().String()
 }
 
 // serve answers until Close. The two transports are equals: neither ending is

@@ -382,7 +382,7 @@ func (s *server) listen() error {
 	fmt.Fprintf(s.out, "%s on %s, serving %d %s from %s\n",
 		s.scheme(), ln.Addr(), len(s.who()), plural(len(s.who()), "person", "people"), s.servedFrom())
 	if r != nil {
-		fmt.Fprintf(s.out, "realm %s on %s (udp and tcp)\n", r.cfg.Realm, r.cfg.Listen)
+		fmt.Fprintf(s.out, "realm %s on %s (udp and tcp)\n", r.cfg.Realm, r.addr())
 	}
 	// What is held back is said at startup as well as by `check`: an entry
 	// that fails the schema is not published, and a journal is where
@@ -473,6 +473,15 @@ func (s *server) Addr() string {
 		return s.cfg.Listen
 	}
 	return s.ln.Addr().String()
+}
+
+// KerberosPort is the port the realm listens on, UDP and TCP, or 0 without
+// one. With `listen = "host:0"` it is the port the kernel gave.
+func (s *server) KerberosPort() int {
+	if s.realm == nil || s.realm.pc == nil {
+		return 0
+	}
+	return s.realm.pc.LocalAddr().(*net.UDPAddr).Port
 }
 
 // Binds is how many binds have been attempted, successful or not.
