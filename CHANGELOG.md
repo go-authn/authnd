@@ -3,6 +3,18 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.16.1 — 2026-11-06
+
+- **`kerberos { listen = "host:0" }` gets one port for UDP and TCP.** It got
+  two (one listen each on port 0), so a `krb5.conf` naming the KDC reached
+  only one transport. The UDP port the kernel gives is held while TCP is bound
+  on the same number; the startup line names that port instead of `:0`.
+- Tests: a KDC under test no longer listens on a port picked, released and
+  named beforehand. Such a port is free only until another connection takes it,
+  and `TestKerberosSeesAPasswordChangedOverLDAP` failed on `main` with `tcp …
+  address already in use`; the tests now start the realm on port 0 and read
+  the port it got.
+
 ## v0.16.0 — 2026-11-05
 
 Security audit 2026-11-05. **Breaking for a deployment with an `oidc` block.**

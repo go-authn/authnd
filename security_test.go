@@ -241,18 +241,17 @@ kerberos {
 func TestKerberosSeesAPasswordChangedOverLDAP(t *testing.T) {
 	mitAvailable(t)
 	dir := t.TempDir()
-	port := freePort(t)
 	r := start(t, fmt.Sprintf(`
 listen  = "127.0.0.1:0"
 base_dn = "dc=example,dc=org"
 user "alice" { password = "oldpassword" }
 kerberos {
   realm  = %q
-  listen = "127.0.0.1:%d"
+  listen = "127.0.0.1:0"
   keytab = %q
 }
-`, testRealm, port, hclPath(writeKeytab(t, dir))))
-	t.Setenv("KRB5_CONFIG", krb5Conf(t, dir, port))
+`, testRealm, hclPath(writeKeytab(t, dir))))
+	t.Setenv("KRB5_CONFIG", krb5Conf(t, dir, r.srv.KerberosPort()))
 	t.Setenv("KRB5CCNAME", "FILE:"+filepath.Join(dir, "ccache"))
 
 	if out, err := kinit(t, "alice", "oldpassword"); err != nil {

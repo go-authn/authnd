@@ -55,8 +55,11 @@ func writeKeytab(t *testing.T, dir string) string {
 	return path
 }
 
-// freePort picks one the kernel is not using, for a realm that must be named
-// in a krb5.conf before it starts.
+// freePort picks a port the kernel is not using, for a configuration that is
+// loaded or checked and never served. ⛔ Not for a realm that listens: the port
+// is free only until the next connection anywhere takes it, which is how a KDC
+// test failed with "address already in use". A realm that listens is given
+// `listen = "127.0.0.1:0"` and asked for its port (server.KerberosPort).
 func freePort(t *testing.T) int {
 	t.Helper()
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
@@ -100,7 +103,6 @@ func kinit(t *testing.T, who, password string) (string, error) {
 func TestAuthndIssuesKerberosTickets(t *testing.T) {
 	mitAvailable(t)
 	dir := t.TempDir()
-	port := freePort(t)
 	kt := writeKeytab(t, dir)
 
 	r := start(t, fmt.Sprintf(`
@@ -108,13 +110,12 @@ base_dn = "dc=example,dc=org"
 user "alice" { password = "alicepw" }
 kerberos {
   realm  = %q
-  listen = "127.0.0.1:%d"
+  listen = "127.0.0.1:0"
   keytab = %q
 }
-`, testRealm, port, kt))
-	_ = r
+`, testRealm, kt))
 
-	t.Setenv("KRB5_CONFIG", krb5Conf(t, dir, port))
+	t.Setenv("KRB5_CONFIG", krb5Conf(t, dir, r.srv.KerberosPort()))
 	t.Setenv("KRB5CCNAME", "FILE:"+filepath.Join(dir, "ccache"))
 
 	if out, err := kinit(t, "alice", "alicepw"); err != nil {
@@ -146,17 +147,16 @@ kerberos {
 func TestAWrongPasswordGetsNoTicket(t *testing.T) {
 	mitAvailable(t)
 	dir := t.TempDir()
-	port := freePort(t)
 	r := start(t, fmt.Sprintf(`
 base_dn = "dc=example,dc=org"
 user "alice" { password = "alicepw" }
 kerberos {
   realm  = %q
-  listen = "127.0.0.1:%d"
+  listen = "127.0.0.1:0"
   keytab = %q
 }
-`, testRealm, port, writeKeytab(t, dir)))
-	t.Setenv("KRB5_CONFIG", krb5Conf(t, dir, port))
+`, testRealm, writeKeytab(t, dir)))
+	t.Setenv("KRB5_CONFIG", krb5Conf(t, dir, r.srv.KerberosPort()))
 	t.Setenv("KRB5CCNAME", "FILE:"+filepath.Join(dir, "ccache"))
 
 	out, err := kinit(t, "alice", "not the password")
@@ -319,6 +319,33 @@ kerberos {
 	var b safeBuffer
 	kerberosReport(&b, cfg, srv.sorted())
 	return b.String()
+}
+
+// Port 0 is ONE port: a krb5.conf names a single KDC address, and UDP and TCP
+// must both answer there. Two listens on ":0" would get two ports.
+func TestARealmOnPortZeroGetsOnePortForBothTransports(t *testing.T) {
+	dir := t.TempDir()
+	r := start(t, fmt.Sprintf(`
+listen  = "127.0.0.1:0"
+base_dn = "dc=example,dc=org"
+user "alice" { password = "x" }
+kerberos {
+  realm  = %q
+  listen = "127.0.0.1:0"
+  keytab = %q
+}
+`, testRealm, hclPath(writeKeytab(t, dir))))
+	k := r.srv.realm
+	udp := k.pc.LocalAddr().(*net.UDPAddr).Port
+	tcp := k.ln.Addr().(*net.TCPAddr).Port
+	if udp == 0 || udp != tcp {
+		t.Fatalf("udp port %d, tcp port %d: want one non-zero port", udp, tcp)
+	}
+	if got := r.srv.KerberosPort(); got != udp {
+		t.Errorf("KerberosPort() = %d, the realm listens on %d", got, udp)
+	}
+	// The startup line names the port it got, not ":0".
+	contains(t, r.out.String(), fmt.Sprintf("realm %s on 127.0.0.1:%d (udp and tcp)", testRealm, udp))
 }
 
 // A realm whose address is already taken fails to LISTEN rather than starting
