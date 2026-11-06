@@ -3,6 +3,27 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.16.2 — 2026-11-06
+
+Security: **a Kerberos request no longer reads the backends.**
+
+- ⛔ The realm looked people up through the set of sources, so every AS-REQ
+  and TGS-REQ — an unauthenticated AS-REQ over UDP included — ran the whole
+  people query of every `users` SQL source and a dial and subtree search of
+  every `ldap` upstream. One datagram from anybody read every backend in full.
+  The realm now reads the snapshot LDAP binds read, with one map lookup
+  (go-authn/kdc v0.6.0 `Finder`). Witness: with the people table dropped after
+  startup, v0.16.1 answers `KDC_ERR_SVC_UNAVAILABLE` and v0.16.2 still finds
+  the person.
+- **`max_age` now holds for Kerberos**: past it, the realm answers
+  `KDC_ERR_SVC_UNAVAILABLE`, as LDAP answers `unavailable`. Before, the realm
+  ignored it.
+- What changes for a deployment: a person removed from a database stops
+  getting tickets within one `refresh` period (60 s by default), like LDAP
+  binds — no longer at the next request. A password changed through authnd is
+  seen at once, as before.
+- go-authn/kdc v0.5.0 to v0.6.0.
+
 ## v0.16.1 — 2026-11-06
 
 - **`kerberos { listen = "host:0" }` gets one port for UDP and TCP.** It got

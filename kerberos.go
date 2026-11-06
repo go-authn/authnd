@@ -39,7 +39,7 @@ func (s *server) openRealm() (*realm, error) {
 	}
 	srv, err := kdc.New(kdc.Config{
 		Realm:    k.Realm,
-		People:   s.dir,
+		People:   realmPeople{s},
 		Services: kt,
 		Lifetime: k.lifetime(),
 		Logf:     func(format string, a ...any) { fmt.Fprintf(s.out, "kerberos: "+format+"\n", a...) },
@@ -49,6 +49,54 @@ func (s *server) openRealm() (*realm, error) {
 	}
 	return &realm{srv: srv, cfg: k}, nil
 }
+
+// realmPeople is who the KDC can issue tickets to: the snapshot LDAP binds
+// read, never the sources themselves.
+//
+// ⛔ The realm used to read s.dir, the set of sources, and kdc called its
+// Identities() on every AS-REQ and TGS-REQ. For a SQL source that is the whole
+// people query, for an ldap upstream a dial and a subtree search -- on every
+// request, an unauthenticated AS-REQ over UDP included: one datagram from
+// anybody read every backend in full. It also bypassed refresh and max_age.
+// The snapshot is rebuilt on the refresh interval and swapped at once when a
+// password is changed through this server, which is what the KDC must see.
+//
+// It is a kdc.Finder, so a request is one map lookup, by the exact name the
+// snapshot holds (a principal is case-sensitive; the roster already refuses
+// two names that differ only by case).
+type realmPeople struct{ s *server }
+
+var _ kdc.Finder = realmPeople{}
+
+// Find is one person, or errTooOld once max_age has run out -- the KDC answers
+// that KDC_ERR_SVC_UNAVAILABLE, as LDAP answers unavailable.
+func (p realmPeople) Find(name string) (*directory.Identity, bool, error) {
+	if p.s.dataTooOld() {
+		return nil, false, errTooOld
+	}
+	id, ok := p.s.who()[name]
+	return id, ok, nil
+}
+
+// Identities is everybody in the snapshot. kdc asks Find; this is here
+// because a directory.Source must have it.
+func (p realmPeople) Identities() ([]*directory.Identity, error) {
+	if p.s.dataTooOld() {
+		return nil, errTooOld
+	}
+	who := p.s.who()
+	out := make([]*directory.Identity, 0, len(who))
+	for _, id := range who {
+		out = append(out, id)
+	}
+	return out, nil
+}
+
+func (p realmPeople) Describe() string { return "the people authnd serves" }
+
+// Members is never asked by kdc; it answers from nothing rather than reach a
+// source.
+func (realmPeople) Members(string) ([]string, error) { return nil, nil }
 
 // listen binds the realm's two sockets. Kerberos answers on UDP and TCP both:
 // a client tries UDP first and falls back when the reply does not fit.
