@@ -68,7 +68,7 @@ func (s *server) factorsFor(id *directory.Identity, given string) ([]mfa.Factor,
 		return nil, fmt.Errorf("what was typed is %d characters, and the last %d of it are the code",
 			len(given), digits)
 	}
-	pw := &knowledge{name: "your password", verify: id.Verify, given: password, where: id.Where()}
+	pw := &knowledge{name: "your password", verify: id.Verify, verifyCtx: id.VerifyContext, given: password, where: id.Where()}
 	return []mfa.Factor{pw, s.codeBehind(pw, id.Name(), id.TOTPSecret(), code)}, nil
 }
 
@@ -121,7 +121,11 @@ var errNotCounted = fmt.Errorf("not looked at, since the password in front of it
 type knowledge struct {
 	name   string
 	verify func(string) error
-	given  string
+	// verifyCtx, when set, is the same check made CANCELLABLE: the upstream
+	// operation is abandoned when the bind's context ends (directory
+	// VerifyContext) and verify is not used.
+	verifyCtx func(ctx context.Context, password string) error
+	given     string
 	// where names the source the check asks, for the cap on pending checks.
 	where string
 
@@ -134,13 +138,17 @@ func (k *knowledge) Kind() mfa.Kind { return mfa.Knowledge }
 
 func (k *knowledge) Verify(ctx context.Context) error {
 	k.once.Do(func() {
-		if k.verify == nil {
+		if k.verify == nil && k.verifyCtx == nil {
 			k.err = mfa.Unavailable(fmt.Errorf("nothing here can check a password for this person"))
 			return
 		}
 		// Bounded by the bind's deadline: a source that does not answer is an
 		// outage (directory.ErrUnavailable), see verifyWithin.
-		k.err = within(ctx, k.where, func() error { return k.verify(k.given) })
+		check := func() error { return k.verify(k.given) }
+		if k.verifyCtx != nil {
+			check = func() error { return k.verifyCtx(ctx, k.given) }
+		}
+		k.err = within(ctx, k.where, check)
 	})
 	return k.err
 }

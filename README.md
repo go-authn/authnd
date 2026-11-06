@@ -567,8 +567,12 @@ so one that outlives its budget keeps a goroutine and an upstream connection
 until the upstream answers or gives up. At most **64 checks per source** may be
 outstanding; the 65th is answered `unavailable` (52) at once and starts nothing,
 so a source that accepts and never answers holds a bounded number of
-goroutines (measured: 400 binds left 1620 goroutines held before, 257 after),
-and binds against other sources are not affected.
+goroutines, and binds against other sources are not affected. Since v0.18.0
+the check is also **cancelled**: an `ldap` source's check is
+`Identity.VerifyContext` (go-authn/directory v0.19.0), so when the bind's budget
+ends the upstream connection is closed and nothing is left running. Measured
+with 400 binds against an upstream that never answers: 1620 goroutines held
+(v0.16.2), 257 (the cap, v0.17.0), 4 (cancellation, v0.18.0).
 
 **A token's name is compared with ASCII case folding only**, as
 go-authn/oidc does: `Kate@univ-a.example` with a Kelvin sign (U+212A) is a

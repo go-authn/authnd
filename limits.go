@@ -130,7 +130,7 @@ func outage(err error) bool { return errors.Is(err, directory.ErrUnavailable) }
 // abandoned goroutine ends when the source answers or its own client times
 // out; it holds no lock.
 func verifyWithin(ctx context.Context, id *directory.Identity, given string) error {
-	return within(ctx, id.Where(), func() error { return id.Verify(given) })
+	return within(ctx, id.Where(), func() error { return id.VerifyContext(ctx, given) })
 }
 
 // maxPendingPerSource is how many checks may be outstanding against one source

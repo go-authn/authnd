@@ -56,7 +56,10 @@ func TestAHungUpstreamCannotAccumulateChecksWithoutBound(t *testing.T) {
 	// Goroutines still held by checks the upstream has not answered: bounded.
 	held := runtime.NumGoroutine() - base
 	t.Logf("peak %d, held after %d binds: %d goroutines (cap %d checks)", peak-base, binds, held, maxPendingPerSource)
-	if limit := 6 * maxPendingPerSource; held > limit {
+	// The checks are CANCELLED when the bind's budget ends (directory
+	// VerifyContext closes the upstream connection), so nothing is held after the
+	// binds have been answered; a few goroutines of slack for the runtime.
+	if limit := 20; held > limit {
 		t.Errorf("%d goroutines still held after %d binds against a hung upstream; at most %d expected", held, binds, limit)
 	}
 	u.proxy.dropAll()

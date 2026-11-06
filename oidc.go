@@ -138,34 +138,11 @@ func openOIDC(b *oidcBlock) (*oidcAuth, error) {
 // scoped is the result of oidc.ScopedName, so it holds exactly one "@".
 func (a *oidcAuth) directoryName(scoped string) string {
 	if a.cfg.LocalDomain != "" {
-		if local, ok := strings.CutSuffix(scoped, "@"+strings.ToLower(strings.TrimSuffix(a.cfg.LocalDomain, "."))); ok {
+		if local, ok := strings.CutSuffix(scoped, "@"+oidc.ASCIILower(strings.TrimSuffix(a.cfg.LocalDomain, "."))); ok {
 			return local
 		}
 	}
 	return scoped
-}
-
-// asciiEqualFold compares two names folding ASCII letters only, which is what
-// oidc.ScopedName does to the name it returns. strings.EqualFold folds Unicode,
-// so it would equate "Kate" (U+212A KELVIN SIGN, a different account at the
-// issuer) with "kate".
-func asciiEqualFold(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := 0; i < len(a); i++ {
-		x, y := a[i], b[i]
-		if 'A' <= x && x <= 'Z' {
-			x += 'a' - 'A'
-		}
-		if 'A' <= y && y <= 'Z' {
-			y += 'a' - 'A'
-		}
-		if x != y {
-			return false
-		}
-	}
-	return true
 }
 
 func truncate(s string, n int) string {
@@ -244,7 +221,7 @@ func (s *server) BindSASL(ctx context.Context, sess ldap.Session, req *ldap.Bind
 	// request from "this is me" -- RFC 5801 calls it the authzid. Nothing
 	// here grants it, so a token for one person carrying a request to be
 	// another is refused rather than quietly treated as the first.
-	if authzid != "" && !asciiEqualFold(authzid, name) && !asciiEqualFold(authzid, scoped) {
+	if authzid != "" && !oidc.EqualASCIIFold(authzid, name) && !oidc.EqualASCIIFold(authzid, scoped) {
 		s.refused(name, fmt.Errorf("the token is for %q and asks to act as %q; this server does not delegate", name, authzid))
 		return s.oidcChallenge("insufficient_scope"), nil
 	}
@@ -258,7 +235,7 @@ func (s *server) BindSASL(ctx context.Context, sess ldap.Session, req *ldap.Bind
 		// roster refuses two names that differ only by case, so a fold match
 		// is the one person.
 		for n, cand := range s.who() {
-			if asciiEqualFold(n, name) {
+			if oidc.EqualASCIIFold(n, name) {
 				id, ok, name = cand, true, n
 				break
 			}
