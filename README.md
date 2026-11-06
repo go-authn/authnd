@@ -517,10 +517,14 @@ queries, and takes 0.5 ms.
 A refresh that fails (a source down, a query that does not run, a group block
 naming somebody who is no longer served) **keeps the last good snapshot** and
 says so once per failure streak, naming the source. To stop serving data that
-may have been revoked, set `max_age` (for example `"10m"`, at least `refresh`):
-once the served data is older, searches, people's binds and password changes
-answer `unavailable` (52); readers, the root DSE and cn=Subschema keep
-answering. Without `max_age` stale data is served for as long as refreshes fail.
+may have been revoked there is `max_age`: **ten minutes by default** (at least
+ten `refresh` periods; with `refresh = "0"` nothing is ever read again, so no
+default applies). Once the served data is older, searches, people's binds and
+password changes answer `unavailable` (52); readers, the root DSE and
+cn=Subschema keep answering. Set `max_age` to another value (at least
+`refresh`), or `max_age = "0"` for no limit, on purpose: a person removed from
+a source that has become unreadable then keeps binding for as long as the
+outage lasts. (Before v0.17.0 the default was no limit.)
 A refresh never overlaps the previous one and does not wait for a slow source
 longer than one period. It reads each source once, in bulk: 10,000 people and
 2,000 groups of 50 on SQLite take about 1.6 s of one core (v0.14.1; v0.14.0
@@ -556,6 +560,19 @@ does not answer within `operation_timeout`, the bind is answered
 log only. A wrong password is still 49. The same holds for the old password of
 a password change and for the password factor of a second factor. Built on
 go-authn/directory v0.17.0 (`ErrUnavailable`) and go-authn/ldap v0.12.0.
+
+**A hung upstream cannot pile up checks.** A check against an upstream cannot
+be cancelled once started (the directory library's `Verify` takes no context),
+so one that outlives its budget keeps a goroutine and an upstream connection
+until the upstream answers or gives up. At most **64 checks per source** may be
+outstanding; the 65th is answered `unavailable` (52) at once and starts nothing,
+so a source that accepts and never answers holds a bounded number of
+goroutines (measured: 400 binds left 1620 goroutines held before, 257 after),
+and binds against other sources are not affected.
+
+**A token's name is compared with ASCII case folding only**, as
+go-authn/oidc does: `Kate@univ-a.example` with a Kelvin sign (U+212A) is a
+different account at the issuer and no longer binds as `kate`.
 
 **The TLS certificate is read again when `cert_file` or `key_file` change** (their
 content, checked on the first handshake after 5 s, and on

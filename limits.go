@@ -130,13 +130,52 @@ func outage(err error) bool { return errors.Is(err, directory.ErrUnavailable) }
 // abandoned goroutine ends when the source answers or its own client times
 // out; it holds no lock.
 func verifyWithin(ctx context.Context, id *directory.Identity, given string) error {
-	return within(ctx, func() error { return id.Verify(given) })
+	return within(ctx, id.Where(), func() error { return id.Verify(given) })
 }
 
-// within runs f and returns its error, or ErrUnavailable once ctx is done.
-func within(ctx context.Context, f func() error) error {
+// maxPendingPerSource is how many checks may be outstanding against one source
+// (named by Identity.Where). A check cannot be cancelled -- Identity.Verify
+// takes no context -- so one that outlives its bind budget keeps its goroutine
+// and its upstream connection until the source answers or its own client gives
+// up. Against a source that accepts and never answers, every bind used to add
+// one, without bound; now the 65th is refused at once (unavailable) and starts
+// nothing. Per source, so a hung one does not stop binds against the others.
+const maxPendingPerSource = 64
+
+var pendingChecks = struct {
+	sync.Mutex
+	n map[string]int
+}{n: map[string]int{}}
+
+func acquireCheck(key string) bool {
+	pendingChecks.Lock()
+	defer pendingChecks.Unlock()
+	if pendingChecks.n[key] >= maxPendingPerSource {
+		return false
+	}
+	pendingChecks.n[key]++
+	return true
+}
+
+func releaseCheck(key string) {
+	pendingChecks.Lock()
+	defer pendingChecks.Unlock()
+	if pendingChecks.n[key]--; pendingChecks.n[key] <= 0 {
+		delete(pendingChecks.n, key)
+	}
+}
+
+// within runs f and returns its error, or ErrUnavailable once ctx is done, or
+// at once when source already has maxPendingPerSource checks outstanding.
+func within(ctx context.Context, source string, f func() error) error {
+	if !acquireCheck(source) {
+		return directory.AsUnavailable(errors.New("too many checks are still waiting on this source"))
+	}
 	done := make(chan error, 1)
-	go func() { done <- f() }()
+	go func() {
+		defer releaseCheck(source)
+		done <- f()
+	}()
 	select {
 	case err := <-done:
 		return err

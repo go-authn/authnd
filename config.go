@@ -96,9 +96,11 @@ type config struct {
 
 	// Refresh is how often every source is read again, in the form Go parses
 	// ("60s"). Empty means 60s; "0" means never, which is v0.13.4's reading
-	// once at startup. MaxAge, when set, is how old the data being served may
-	// get while refreshes keep failing before searches and binds that need it
-	// answer unavailable instead (refresh.go).
+	// once at startup. MaxAge is how old the data being served may get while
+	// refreshes keep failing before searches and binds that need it answer
+	// unavailable instead (refresh.go). Empty means ten minutes (at least ten
+	// refresh periods); "0" means no limit, and so does an unset one when Refresh
+	// is "0".
 	Refresh string `hcl:"refresh,optional"`
 	MaxAge  string `hcl:"max_age,optional"`
 
