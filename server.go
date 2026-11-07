@@ -190,7 +190,7 @@ func open(cfg *config, out io.Writer) (*server, error) {
 	var groups *groupSnapshot
 	err = s.startup(func(stage func(string)) error {
 		stage("opening " + sourceNames(cfg.Directories))
-		srcs, err := hcldir.OpenAll(cfg.Directories)
+		srcs, err := hcldir.OpenAll(withQueryDeadline(cfg))
 		if err != nil {
 			return err
 		}

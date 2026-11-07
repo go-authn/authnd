@@ -3,6 +3,22 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.18.2 — 2026-11-07
+
+- **A SQL read that hangs no longer freezes the refresh for good (#87).** A
+  database that accepted the connection and stopped answering (a partition
+  without RST, a frozen server) left the refresh goroutine blocked in the
+  query: `refreshing` stayed true and every later tick said "refresh skipped"
+  until a restart, so past `max_age` everything answered `unavailable` even
+  after the server came back. Every `users "sql"` block now has a
+  `query_timeout` (go-authn/directory v0.20.0), by default three quarters of
+  `refresh`: the read ends before `refreshOnce` gives up, the next tick runs,
+  and the refresh recovers once the database answers. Set `query_timeout`
+  in the block to change it; `"0"` is no limit. With `refresh = "0"` the
+  library's default of 30 s applies. Behaviour change: a single query slower
+  than the deadline now fails.
+- Dependencies: go-authn/directory v0.19.0 to v0.20.0.
+
 ## v0.18.1 — 2026-11-07
 
 - **A startup that times out names which SQL source it was opening.** The

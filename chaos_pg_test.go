@@ -136,6 +136,63 @@ func TestPGChaosConnectionResetMidQuery(t *testing.T) {
 	wantMembers(t, r, "dora")
 }
 
+// #87: a read that HANGS, as opposed to one that is reset. The proxy keeps the
+// connection open and swallows the server's answers. The source takes no
+// context from authnd, so the read used to block for ever: refreshOnce gave up
+// waiting, the goroutine stayed in db.Query, `refreshing` stayed true, and every
+// later tick said "refresh skipped" until a restart.
+func TestPGChaosAHungReadDoesNotFreezeTheRefresh(t *testing.T) {
+	pg := startPG(t)
+	pg.exec(pgSchema)
+	proxy := newFlaky(t, pg.addr())
+	const every = 2 * time.Second
+	r, clk := pgRefreshing(t, pgConfig(t, pg.dsn(proxy.addr()), `refresh = "2s"`))
+	wantMembers(t, r, "dora", "eli")
+	built := r.srv.snap.Load().built
+
+	proxy.stall.Store(true)
+	begin := time.Now()
+	clk.Advance(time.Minute)
+	r.srv.refreshOnce(bg, every)
+	if took := time.Since(begin); took > every+time.Second {
+		t.Errorf("a refresh against a hung database took %s", took)
+	}
+	// Witness: the query reached the server and its answer was swallowed.
+	if proxy.dropped.Load() == 0 && proxy.up.Load() == 0 {
+		t.Fatal("nothing went through the proxy: the test proves nothing")
+	}
+	if failures(r) != 1 || !strings.Contains(r.out.String(), "a pgx database") && !strings.Contains(r.out.String(), "did not finish") {
+		t.Fatalf("want one failure line:\n%s", r.out.String())
+	}
+	// The read is over (cancelled), not blocked: the next tick can run.
+	deadline := time.Now().Add(5 * time.Second)
+	for r.srv.refreshing.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("the refresh goroutine is still blocked in the database 5s later: every later tick will be skipped")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	clk.Advance(time.Minute)
+	r.srv.refreshOnce(bg, every) // still hung: runs, fails, same streak
+	if strings.Contains(r.out.String(), "refresh skipped") {
+		t.Fatalf("the next tick was skipped:\n%s", r.out.String())
+	}
+	if !r.srv.snap.Load().built.Equal(built) {
+		t.Error("a failed refresh moved built")
+	}
+	wantMembers(t, r, "dora", "eli")
+
+	// The network heals; the data changed meanwhile.
+	proxy.stall.Store(false)
+	pg.exec(`delete from teams where member = 'eli'`)
+	clk.Advance(time.Minute)
+	r.srv.refreshOnce(bg, every)
+	if !strings.Contains(r.out.String(), "refresh works again") {
+		t.Fatalf("no recovery:\n%s", r.out.String())
+	}
+	wantMembers(t, r, "dora")
+}
+
 // 3. startup_timeout against a listener that accepts and never answers.
 func TestPGChaosStartupAgainstASilentListener(t *testing.T) {
 	// No server binaries needed: the listener is the whole fixture.
