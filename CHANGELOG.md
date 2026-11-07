@@ -3,6 +3,19 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.18.1 — 2026-11-07
+
+- **A startup that times out names which SQL source it was opening.** The
+  message read `opening sql did not answer`, the same for every `users "sql"`
+  block, so with two databases (or one among LDAP upstreams) it did not say
+  which. It now reads `opening sql pgx (dsn_file /etc/authnd/pg.dsn) did not
+  answer`: the driver and the file that holds the DSN, never the DSN.
+- Tests: chaos against a real PostgreSQL (#73), on a disposable cluster that
+  the tests `initdb` themselves -- server stopped during a refresh, connection
+  reset mid-query, a listener that never answers, Kerberos during an outage.
+  They skip without the server binaries; `AUTHND_REQUIRE_PG=1` makes a skip a
+  failure (set on the Linux lane).
+
 ## v0.18.0 — 2026-11-06
 
 - **A password check against an upstream is cancelled, not only bounded.**

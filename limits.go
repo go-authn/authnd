@@ -209,6 +209,15 @@ func sourceNames(blocks []hcldir.Block) string {
 				name += " " + u.Redacted()
 			}
 		}
+		if b.Driver != "" {
+			// ⛔ "opening sql did not answer" named no source at all once a
+			// configuration had two. The DSN itself holds a password; the file
+			// that holds it does not.
+			name += " " + b.Driver
+			if b.DSNFile != "" {
+				name += " (dsn_file " + b.DSNFile + ")"
+			}
+		}
 		parts = append(parts, name)
 	}
 	return strings.Join(parts, ", ")
