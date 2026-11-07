@@ -1,4 +1,4 @@
-//go:build !nosql
+//go:build !nosql && !noldap
 
 // SPDX-License-Identifier: BSD-3-Clause
 
@@ -102,19 +102,18 @@ func TestPGChaosConnectionResetMidQuery(t *testing.T) {
 	wantMembers(t, r, "dora", "eli")
 	built := r.srv.snap.Load().built
 
-	// From now on the first thing a connection says is the end of it. The
-	// pool holds a connection from startup: the refresh's query is sent on it
-	// and the answer never comes.
-	reset := func([]byte) bool { return false }
+	// The handshake goes through (the startup message begins with a length
+	// whose first byte is 0); the connection is reset the moment a query
+	// message has been sent -- Parse, Bind, Execute, Sync or a simple Query,
+	// the frontend message types of the protocol -- so the answer never comes.
+	// The pooled connection has the statement cached and sends only Bind and
+	// Execute; a new one sends Parse as well. Either way the reset is mid-query.
+	reset := func(b []byte) bool { return len(b) == 0 || !strings.ContainsRune("PBEQSD", rune(b[0])) }
 	proxy.onUp.Store(&reset)
-	accepted := proxy.accepted.Load()
 	clk.Advance(time.Minute)
 	r.srv.refreshOnce(bg, time.Minute)
 	if proxy.killed.Load() == 0 {
-		t.Fatal("no connection was reset: the refresh did not go through the proxy")
-	}
-	if got := proxy.accepted.Load(); got != accepted {
-		t.Errorf("pgx opened %d new connection(s) before failing: the reset hit a handshake, not a query in flight", got-accepted)
+		t.Fatal("no connection was reset: the refresh never sent the people query through the proxy")
 	}
 	refreshN(r, clk, 2)
 
