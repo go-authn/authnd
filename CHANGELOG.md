@@ -3,6 +3,19 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.18.3 — 2026-11-07
+
+- **Returned means stopped (#18).** When a shutdown returns, the LDAP listener
+  and, with a realm, both Kerberos sockets are closed and `serve()` has
+  returned, so a restart under systemd can bind at once. A shutdown that
+  landed before `serve()` had reached the Kerberos library returned with the
+  realm's UDP and TCP sockets still open (the library learns of a socket only
+  when it is served): authnd now closes the sockets it opened, and `Close`
+  waits for `serve()`, which stops and waits for both transports whichever
+  side ended first. `TestReturnedMeansStopped` asks the sockets themselves
+  (`Accept` and `ReadFrom` return `net.ErrClosed`); re-binding the released
+  port proved nothing, since another test's connection takes it.
+
 ## v0.18.2 — 2026-11-07
 
 - **A SQL read that hangs no longer freezes the refresh for good (#87).** A

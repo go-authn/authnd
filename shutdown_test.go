@@ -70,14 +70,11 @@ user "dora" { password = "hunter2" }
 		t.Errorf("the shutdown said nothing:\n%s", out.String())
 	}
 
-	// ⛔ And the port is FREE. This is the assertion the whole refactor is
-	// for: "returned" is not "stopped", and only the port can tell them
-	// apart.
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		t.Fatalf("the port is still held after shutdown returned: %v", err)
-	}
-	ln.Close()
+	// ⛔ And the listener is CLOSED, asked of the listener itself: re-binding
+	// the released port proves nothing, because another test's connection
+	// takes a released ephemeral port within milliseconds (#81, #18).
+	// TestReturnedMeansStopped holds the whole contract, the realm included.
+	assertStopped(t, srv, nil, nil, srv.ln)
 }
 
 // A server that stops on its own -- a listener that died, a port taken from
