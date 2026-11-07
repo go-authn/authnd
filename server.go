@@ -103,8 +103,9 @@ type server struct {
 	rctx       context.Context
 	rcancel    context.CancelFunc
 	rdone      sync.WaitGroup
-	swapMu     sync.Mutex    // held to swap snap, and to rebuild it after a password write
-	gen        atomic.Uint64 // counts the swaps a password write made; a refresh built before one is discarded
+	sw         sync.WaitGroup // serve() running: Close does not return before it does
+	swapMu     sync.Mutex     // held to swap snap, and to rebuild it after a password write
+	gen        atomic.Uint64  // counts the swaps a password write made; a refresh built before one is discarded
 	refreshing atomic.Bool
 	failing    bool // a refresh failed and none has worked since; under mu
 	now        func() time.Time
@@ -288,10 +289,24 @@ func (s *server) Close() error {
 		s.ln.Close()
 	}
 	s.realm.close()
+	// And serve() has returned, so the goroutines inside Accept and ReadFrom
+	// are gone too: returned means stopped (#18).
+	s.sw.Wait()
 	if s.dir != nil {
 		return s.dir.Close()
 	}
 	return nil
+}
+
+// stopListeners closes everything this server listens on: the LDAP listener
+// and its connections, and the realm's two sockets. It is safe to call twice,
+// before serve() reached the library, and from serve() itself.
+func (s *server) stopListeners() {
+	s.ldap.Close()
+	if s.ln != nil {
+		s.ln.Close()
+	}
+	s.realm.close()
 }
 
 // listen starts answering, and says where.
@@ -425,6 +440,8 @@ func (s *server) serve() error {
 		return nil
 	}
 	s.serving = true
+	s.sw.Add(1) // under the lock, like serving: Close waits for it
+	defer s.sw.Done()
 	r := s.realm
 	// Under the lock, so that Close, which sets closed under it and then
 	// waits, never meets an Add that had not happened yet.
@@ -441,11 +458,27 @@ func (s *server) serve() error {
 	}
 
 	var err error
+	gotLDAP, gotRealm := false, 0
 	select {
 	case err = <-ldapDone:
+		gotLDAP = true
 	case err = <-realmDone:
+		gotRealm = 1
 		if errors.Is(err, kdc.ErrClosed) {
 			err = nil
+		}
+	}
+	// ⛔ Returned means stopped (#18): whichever side ended first, the rest is
+	// stopped and waited for, so that nothing this server opened is still open
+	// when serve() returns -- not the LDAP listener, not the realm's two
+	// sockets, not a goroutine still inside Accept or ReadFrom.
+	s.stopListeners()
+	if !gotLDAP {
+		<-ldapDone
+	}
+	if r != nil {
+		for ; gotRealm < 2; gotRealm++ {
+			<-realmDone
 		}
 	}
 	s.mu.Lock()

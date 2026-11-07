@@ -167,6 +167,16 @@ func (r *realm) close() {
 		return
 	}
 	r.srv.Close()
+	// ⛔ The sockets WE opened, whatever the library did with them. kdc.Server
+	// learns of a socket only when ServeUDP or ServeTCP is called, and Close
+	// before that closes nothing: a shutdown that lands before serve() reached
+	// them returned with both sockets open (#18). Closing twice is harmless.
+	if r.pc != nil {
+		r.pc.Close()
+	}
+	if r.ln != nil {
+		r.ln.Close()
+	}
 }
 
 // kerberosReport says who this realm could issue a ticket to, and who it
