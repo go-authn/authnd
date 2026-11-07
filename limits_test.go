@@ -43,6 +43,12 @@ type flaky struct {
 	mu       sync.Mutex
 	conns    []net.Conn
 	done     chan struct{}
+
+	// What went through, as the witness that a test reached the upstream at
+	// all: bytes the client sent (up) and the upstream answered (down), the
+	// connections ended by the onUp hook, and the connections accepted.
+	up, down, killed, accepted atomic.Int64
+	onUp                       atomic.Pointer[func([]byte) bool]
 }
 
 const (
@@ -98,6 +104,7 @@ func (f *flaky) accept() {
 		if err != nil {
 			return
 		}
+		f.accepted.Add(1)
 		f.track(c)
 		go f.serve(c)
 	}
@@ -108,7 +115,7 @@ func (f *flaky) serve(c net.Conn) {
 	case reset:
 		c.Close()
 	case hang:
-		io.Copy(io.Discard, c) // until the proxy closes it
+		io.Copy(countWriter{io.Discard, &f.up}, c) // until the proxy closes it
 	case cut:
 		buf := make([]byte, 1)
 		c.Read(buf)
@@ -120,11 +127,47 @@ func (f *flaky) serve(c net.Conn) {
 			return
 		}
 		f.track(u)
-		go io.Copy(u, c)
-		io.Copy(c, u)
+		go f.copyUp(u, c)
+		io.Copy(countWriter{c, &f.down}, u)
 		c.Close()
 		u.Close()
 	}
+}
+
+// copyUp forwards what the client says, counting it, and lets the test's
+// onUp hook end the connection: a reset in the middle of a query is a hook that
+// answers false once the query has been sent.
+func (f *flaky) copyUp(u, c net.Conn) {
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := c.Read(buf)
+		if n > 0 {
+			f.up.Add(int64(n))
+			if h := f.onUp.Load(); h != nil && !(*h)(buf[:n]) {
+				f.killed.Add(1)
+				c.Close()
+				u.Close()
+				return
+			}
+			if _, werr := u.Write(buf[:n]); werr != nil {
+				return
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+type countWriter struct {
+	w io.Writer
+	n *atomic.Int64
+}
+
+func (c countWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n.Add(int64(n))
+	return n, err
 }
 
 // A directory upstream, reached through a flaky proxy, as the only source of

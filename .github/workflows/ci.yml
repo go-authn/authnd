@@ -50,9 +50,14 @@ jobs:
           if [ -n "$unformatted" ]; then
             echo "::error::these files are not gofmt-clean:"; echo "$unformatted"; exit 1
           fi
+      # PostgreSQL's server binaries are preinstalled (not running) on the
+      # Ubuntu runner, under /usr/lib/postgresql/<N>/bin; the chaos tests
+      # (chaos_pg_test.go) initdb a cluster of their own and find them there.
+      # With AUTHND_REQUIRE_PG they cannot skip silently.
       - run: go test -count=1 ./...
         env:
           AUTHND_REQUIRE_JUDGE: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+          AUTHND_REQUIRE_PG: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
 
   install:
     name: go install @latest works
