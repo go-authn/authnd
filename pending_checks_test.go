@@ -5,6 +5,7 @@
 package main
 
 import (
+	"fmt"
 	"runtime"
 	"sync"
 	"testing"
@@ -59,8 +60,12 @@ func TestAHungUpstreamCannotAccumulateChecksWithoutBound(t *testing.T) {
 	// The checks are CANCELLED when the bind's budget ends (directory
 	// VerifyContext closes the upstream connection), so nothing is held after the
 	// binds have been answered; a few goroutines of slack for the runtime.
+	// The goroutines of cancelled checks unwind a moment after the answer (a
+	// loaded host, the race detector, qemu: 22 and 33 were seen at the instant
+	// of the count), so the bound is waited for, not sampled once (#91).
 	if limit := 20; held > limit {
-		t.Errorf("%d goroutines still held after %d binds against a hung upstream; at most %d expected", held, binds, limit)
+		waitUntil(t, func() bool { return runtime.NumGoroutine()-base <= limit },
+			fmt.Sprintf("at most %d goroutines held after %d binds against a hung upstream (%d when counted)", limit, binds, held))
 	}
 	u.proxy.dropAll()
 	u.proxy.mode.Store(pass)

@@ -180,20 +180,45 @@ func within(ctx context.Context, source string, f func() error) error {
 	case err := <-done:
 		return err
 	case <-ctx.Done():
+		if f := afterBudget.Load(); f != nil {
+			(*f)()
+		}
 		return directory.AsUnavailable(fmt.Errorf("the source did not answer in time: %w", ctx.Err()))
 	}
 }
 
-// bindBudget is how long a bind may wait on a source: a little less than the
-// operation timeout, so that this answer (52) is the one the client gets and
-// not the library's timeLimitExceeded (3) at the full deadline.
+// minBindMargin is the least time a bind's answer has before the library's
+// deadline: the handler must notice the budget ended, return and send, and a
+// loaded host takes tens of milliseconds for that.
+const minBindMargin = 250 * time.Millisecond
+
+// bindMargin is how much earlier than the operation timeout a bind's budget
+// ends: a tenth of it, never less than minBindMargin, never more than half
+// (the budget stays positive and at least half the operation).
+//
+// ⛔ A tenth alone was 30 ms for operation_timeout = "300ms", and a loaded
+// runner spent more than that between the budget ending and the answer being
+// sent: the library's deadline (it answers timeLimitExceeded, 3, whether or not
+// the handler has returned, and drops the handler's late result) won the race
+// and an outage of the password source read as 3 instead of 52 (#91).
+func bindMargin(op time.Duration) time.Duration {
+	return min(max(op/10, minBindMargin), op/2)
+}
+
+// bindBudget is how long a bind may wait on a source: less than the operation
+// timeout by bindMargin, so that this answer (52) is the one the client gets
+// and not the library's timeLimitExceeded (3) at the full deadline.
 func (s *server) bindBudget(ctx context.Context) (context.Context, context.CancelFunc) {
 	op := s.cfg.limits().operation
 	if op <= 0 {
 		return ctx, func() {}
 	}
-	return context.WithTimeout(ctx, op-op/10)
+	return context.WithTimeout(ctx, op-bindMargin(op))
 }
+
+// afterBudget is a test's way to be slow to schedule: called where a check
+// wakes because its budget ended, before the answer is made. nil otherwise.
+var afterBudget atomic.Pointer[func()]
 
 // sourceNames says which sources startup is about to open, for an error that
 // has to name the one that did not answer.

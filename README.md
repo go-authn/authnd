@@ -549,7 +549,7 @@ address; an operation may take 30s; startup may take 1m0s`).
 |---|---|---|
 | `max_connections` | `4096` | connections held at once; over it a connection is sent a notice of disconnection (RFC 4511 4.4.1, result code busy) and closed. `0` = no limit. Lower it under a small `ulimit -n`. |
 | `max_connections_per_ip` | `0` (none) | per remote address; must not exceed `max_connections`. Behind a NAT or a proxy every client is one address: leave it unset. |
-| `operation_timeout` | `"30s"` | one LDAP operation. At the deadline the library answers `timeLimitExceeded` (3) for a handler that is still running; a bind waiting on an upstream directory is answered `unavailable` (52) a tenth earlier. `"0"` = no limit. |
+| `operation_timeout` | `"30s"` | one LDAP operation. At the deadline the library answers `timeLimitExceeded` (3) for a handler that is still running; a bind waiting on an upstream directory is answered `unavailable` (52) earlier: by a tenth of the timeout, at least 250 ms, at most half of it. `"0"` = no limit. |
 | `startup_timeout` | `"60s"` | opening and first reading every source. On expiry authnd exits with an error naming the stage and the source (`startup did not finish within 60s (startup_timeout): reading the people of ldap ldap://... did not answer`). `"0"` = no limit. For a `users "sql"` block the stage reads `opening sql pgx (dsn_file /etc/authnd/dsn)`. |
 | `query_timeout` (in a `users "sql"` block) | ¾ of `refresh` (45s by default) | each query of the block, rows included. A database that accepts the connection and stops answering ends the read at the deadline, so the next refresh runs instead of being skipped for ever. `"0"` = no limit (a hung read then freezes the refresh until a restart). |
 

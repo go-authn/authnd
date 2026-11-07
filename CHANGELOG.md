@@ -3,6 +3,20 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.18.5 — 2026-11-07
+
+- **A bind against a hung upstream is answered `unavailable` (52), not
+  `timeLimitExceeded` (3), on a loaded host too (#91).** The library answers 3
+  at `operation_timeout` whatever the handler is doing; a bind's budget ended a
+  tenth of the timeout earlier (30 ms for `"300ms"`) and a host slow to
+  schedule spent that margin, so an outage of the password source read as 3.
+  The margin is now a tenth of the timeout, at least 250 ms, at most half of it
+  (the budget stays positive). No configuration changes. Test: the check is made
+  to wake 100 ms after its budget ended (`afterBudget`); on v0.18.4 it answers 3
+  every time, now 52. The goroutine count of
+  `TestAHungUpstreamCannotAccumulateChecksWithoutBound` is waited for instead of
+  sampled once.
+
 ## v0.18.4 — 2026-11-07
 
 - **A refresh over an LDAP upstream allocates a quarter of what it did
