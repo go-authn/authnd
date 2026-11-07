@@ -27,7 +27,7 @@ func BenchmarkRefreshLDAP10k2k(b *testing.B) {
 	if *refreshProfile != "" {
 		runtime.MemProfileRate = 4096
 	}
-	d :=&ldaptest.Directory{
+	d := &ldaptest.Directory{
 		People:        map[string]ldaptest.Person{},
 		GroupsOfNames: map[string][]string{},
 	}
