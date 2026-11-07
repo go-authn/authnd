@@ -3,6 +3,19 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.18.4 — 2026-11-07
+
+- **A refresh over an LDAP upstream allocates a quarter of what it did
+  (go-authn/directory#42).** go-authn/ldap v0.12.2: the schema check of
+  published entries compared every pair of `member` values, parsing both DNs
+  each time; it is now a keyed lookup. `BenchmarkRefreshLDAP10k2k` (one
+  `refreshTry`, 10,000 people, 2,000 groupOfNames of 50 DNs, upstream
+  in-process; exact counts): 37.6 M allocations / 2.43 GB before, 9.95 M /
+  651 MB now. Before, 84 % of the allocations were this check. The rest is
+  split about evenly between the LDAP wire library on the client
+  (go-asn1-ber, go-ldap `ParseDN`), the in-process test server (not a cost in
+  production) and authnd's snapshot and publication.
+
 ## v0.18.3 — 2026-11-07
 
 - **Returned means stopped (#18).** When a shutdown returns, the LDAP listener
