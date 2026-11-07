@@ -47,8 +47,9 @@ type flaky struct {
 	// What went through, as the witness that a test reached the upstream at
 	// all: bytes the client sent (up) and the upstream answered (down), the
 	// connections ended by the onUp hook, and the connections accepted.
-	up, down, killed, accepted atomic.Int64
-	onUp                       atomic.Pointer[func([]byte) bool]
+	up, down, killed, accepted, dropped atomic.Int64
+	onUp                                atomic.Pointer[func([]byte) bool]
+	stall                               atomic.Bool // swallow the upstream's answers, keep the connection
 }
 
 const (
@@ -128,9 +129,32 @@ func (f *flaky) serve(c net.Conn) {
 		}
 		f.track(u)
 		go f.copyUp(u, c)
-		io.Copy(countWriter{c, &f.down}, u)
+		f.copyDown(c, u)
 		c.Close()
 		u.Close()
+	}
+}
+
+// copyDown forwards what the upstream says -- or, while stall is set, reads it
+// and says nothing: the connection stays open and nothing ever comes back, as
+// with a partition that drops packets without a reset.
+func (f *flaky) copyDown(c, u net.Conn) {
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := u.Read(buf)
+		if n > 0 {
+			if f.stall.Load() {
+				f.dropped.Add(int64(n))
+			} else {
+				f.down.Add(int64(n))
+				if _, werr := c.Write(buf[:n]); werr != nil {
+					return
+				}
+			}
+		}
+		if err != nil {
+			return
+		}
 	}
 }
 

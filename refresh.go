@@ -6,10 +6,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/go-authn/directory/hcldir"
 	"github.com/go-authn/ldap"
 )
 
@@ -240,6 +242,30 @@ func (s *server) refreshOnce(parent context.Context, every time.Duration) {
 			s.noteRefresh(fmt.Errorf("it did not finish within %s: a source is slow", every))
 		}
 	}
+}
+
+// withQueryDeadline gives every sql block that did not say `query_timeout` a
+// deadline of three quarters of the refresh period.
+//
+// ⛔ A source reads without a context, and refreshOnce can only stop WAITING
+// for it: a database that accepted the connection and stopped answering (a
+// partition without RST, a frozen server) left the goroutine blocked in the
+// query, `refreshing` true, and every later tick "skipped" until a restart
+// (#87). The deadline ends the read itself, a quarter of a period before
+// refreshOnce gives up, so the next tick finds the refresh finished. With
+// refresh = "0" (never) the library's own default applies.
+func withQueryDeadline(cfg *config) []hcldir.Block {
+	every := cfg.refreshEvery()
+	out := slices.Clone(cfg.Directories)
+	if every <= 0 {
+		return out
+	}
+	for i := range out {
+		if out[i].Kind == "sql" && out[i].QueryTimeout == "" {
+			out[i].QueryTimeout = (every * 3 / 4).String()
+		}
+	}
+	return out
 }
 
 // refreshTry is one read and one swap, again if a password write got in between.
