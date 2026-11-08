@@ -3,6 +3,16 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.18.6 — 2026-11-08
+
+- **Fewer allocations in a refresh over an LDAP upstream (go-authn/directory#42).**
+  go-authn/ldap v0.12.3 keys a plain member DN from its bytes (one allocation
+  instead of 17). `BenchmarkRefreshLDAP10k2k` (exact counts): 9.95 M allocations /
+  651 MB per refresh with v0.12.2, 8.35 M / 573 MB now (37.6 M / 2.43 GB with
+  v0.18.3). What is left is mostly the wire library on the client, the
+  in-process test server (36 % and 35 % of the objects) and authnd's snapshot
+  and validation (17 %).
+
 ## v0.18.5 — 2026-11-07
 
 - **A bind against a hung upstream is answered `unavailable` (52), not
