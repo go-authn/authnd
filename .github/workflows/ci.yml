@@ -23,8 +23,8 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           check-latest: true
@@ -63,8 +63,8 @@ jobs:
     name: go install @latest works
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with: { go-version-file: go.mod, check-latest: true, cache: true }
       # A `replace` directive makes `go install pkg@version` refuse outright.
       # This is a COMMAND: a module nobody can install is a command nobody has.
@@ -83,8 +83,8 @@ jobs:
       matrix:
         tags: [nosql, noldap, "nosql,noldap"]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with: { go-version-file: go.mod, check-latest: true, cache: true }
       # hcldir carries the tags a PROGRAM uses to leave out a database driver
       # or an LDAP client. They have to keep building here, or the program
@@ -112,8 +112,8 @@ jobs:
     env:
       CGO_ENABLED: "1"
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with: { go-version-file: go.mod, check-latest: true, cache: true }
       # ⛔ The judge has to be here too. It was in the `test` lane and nowhere
       # else, so every test that needs OpenLDAP's client SKIPPED in this one
@@ -136,8 +136,8 @@ jobs:
     name: coverage floor (88%, standard is 100%)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with: { go-version-file: go.mod, check-latest: true, cache: true }
       # ⛔ The judge has to be here too. It was in the `test` lane and nowhere
       # else, so every test that needs OpenLDAP's client SKIPPED in this one
@@ -197,8 +197,8 @@ jobs:
   govulncheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with: { go-version-file: go.mod, check-latest: true, cache: true }
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
@@ -210,8 +210,8 @@ jobs:
       matrix:
         goarch: [amd64, arm64, riscv64, loong64, ppc64le, s390x, 386, arm]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with: { go-version-file: go.mod, check-latest: true, cache: true }
       - run: GOARCH=${{ matrix.goarch }} go build ./...
       # ⛔ `qemu-user-static` is a VIRTUAL package on Ubuntu 26.04, which
