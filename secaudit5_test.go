@@ -72,18 +72,18 @@ func TestSecaudit5LateChecksStillBoundTheSource(t *testing.T) {
 	close(release)
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		if err := within(context.Background(), source, func() error { return nil }); err == nil {
+		pendingChecks.Lock()
+		n := pendingChecks.n[source]
+		pendingChecks.Unlock()
+		if n == 0 {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("finished late checks still hold their place")
+			t.Fatalf("%d finished late checks still hold their place", n)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	pendingChecks.Lock()
-	n := len(pendingChecks.n)
-	pendingChecks.Unlock()
-	if n != 0 {
-		t.Fatalf("%d sources still counted after every check finished", n)
+	if err := within(context.Background(), source, func() error { return nil }); err != nil {
+		t.Fatalf("a check after the late ones finished: %v", err)
 	}
 }
