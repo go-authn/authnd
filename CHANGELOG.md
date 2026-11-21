@@ -3,6 +3,18 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.18.7 — 2026-11-21
+
+- **Anonymous slow binds can no longer make every bind on a source answer
+  `unavailable` (security audit, DoS).** The per-source cap of 64
+  (`maxPendingPerSource`) counted every check from the moment it started, so 64
+  unauthenticated connections doing slow wrong-password binds starved the
+  legitimate ones. It now counts only checks that outlived their bind budget and
+  are still running, which is what it was written to bound (a hung upstream);
+  checks inside their budget are bounded by `max_connections`. The default of
+  `max_connections_per_ip` is unchanged (no limit); set it where clients connect
+  directly.
+
 ## v0.18.6 — 2026-11-08
 
 - **Fewer allocations in a refresh over an LDAP upstream (go-authn/directory#42).**

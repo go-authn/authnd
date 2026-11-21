@@ -133,13 +133,17 @@ func verifyWithin(ctx context.Context, id *directory.Identity, given string) err
 	return within(ctx, id.Where(), func() error { return id.VerifyContext(ctx, given) })
 }
 
-// maxPendingPerSource is how many checks may be outstanding against one source
-// (named by Identity.Where). A check cannot be cancelled -- Identity.Verify
-// takes no context -- so one that outlives its bind budget keeps its goroutine
-// and its upstream connection until the source answers or its own client gives
-// up. Against a source that accepts and never answers, every bind used to add
-// one, without bound; now the 65th is refused at once (unavailable) and starts
-// nothing. Per source, so a hung one does not stop binds against the others.
+// maxPendingPerSource is how many checks that OUTLIVED their bind budget may
+// still be running against one source (named by Identity.Where). A check cannot
+// be cancelled -- Identity.Verify takes no context -- so one that outlives its
+// bind budget keeps its goroutine and its upstream connection until the source
+// answers or its own client gives up. Against a source that accepts and never
+// answers, every bind used to add one, without bound; now once 64 such checks
+// are still running the next is refused at once (unavailable) and starts
+// nothing. Checks inside their budget are not counted: they are bounded by the
+// connection limits, and counting them let anonymous slow binds starve the
+// legitimate ones. Per source, so a hung one does not stop binds against the
+// others.
 const maxPendingPerSource = 64
 
 var pendingChecks = struct {
@@ -147,39 +151,62 @@ var pendingChecks = struct {
 	n map[string]int
 }{n: map[string]int{}}
 
-func acquireCheck(key string) bool {
+// admitCheck reports whether a new check may start against key. Only checks
+// that are PAST their bind budget count (see markLate): a check still inside
+// its budget is an ordinary bind, bounded by max_connections, and counting it
+// let 64 anonymous slow wrong-password binds make every legitimate bind on the
+// same source answer unavailable.
+func admitCheck(key string) bool {
 	pendingChecks.Lock()
 	defer pendingChecks.Unlock()
-	if pendingChecks.n[key] >= maxPendingPerSource {
-		return false
-	}
-	pendingChecks.n[key]++
-	return true
+	return pendingChecks.n[key] < maxPendingPerSource
 }
 
-func releaseCheck(key string) {
+// check is one running Identity.Verify; both fields are guarded by
+// pendingChecks.
+type check struct{ finished, late bool }
+
+// markLate counts c against key when it has outlived its budget.
+func markLate(key string, c *check) {
 	pendingChecks.Lock()
 	defer pendingChecks.Unlock()
-	if pendingChecks.n[key]--; pendingChecks.n[key] <= 0 {
-		delete(pendingChecks.n, key)
+	if !c.finished {
+		c.late = true
+		pendingChecks.n[key]++
+	}
+}
+
+// finishCheck ends c, and stops counting it when it was late.
+func finishCheck(key string, c *check) {
+	pendingChecks.Lock()
+	defer pendingChecks.Unlock()
+	c.finished = true
+	if c.late {
+		if pendingChecks.n[key]--; pendingChecks.n[key] <= 0 {
+			delete(pendingChecks.n, key)
+		}
 	}
 }
 
 // within runs f and returns its error, or ErrUnavailable once ctx is done, or
-// at once when source already has maxPendingPerSource checks outstanding.
+// at once when source already has maxPendingPerSource checks that outlived
+// their budget and are still running.
 func within(ctx context.Context, source string, f func() error) error {
-	if !acquireCheck(source) {
+	if !admitCheck(source) {
 		return directory.AsUnavailable(errors.New("too many checks are still waiting on this source"))
 	}
+	c := &check{}
 	done := make(chan error, 1)
 	go func() {
-		defer releaseCheck(source)
-		done <- f()
+		err := f()
+		finishCheck(source, c)
+		done <- err
 	}()
 	select {
 	case err := <-done:
 		return err
 	case <-ctx.Done():
+		markLate(source, c)
 		if f := afterBudget.Load(); f != nil {
 			(*f)()
 		}
