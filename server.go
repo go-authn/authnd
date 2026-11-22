@@ -270,11 +270,7 @@ func localSource(cfg *config) (*directory.Static, error) {
 	// A totp_secret_from is resolved by hcldir.File, after loadConfig's own
 	// check of an inline totp_secret, so the length rule runs here on what
 	// every spelling produced.
-	people, err := static.Identities()
-	if err != nil {
-		return nil, err
-	}
-	for _, p := range people {
+	for _, p := range static.People {
 		if secret := p.TOTPSecret(); secret != nil {
 			if err := secretLongEnough(secret); err != nil {
 				return nil, fmt.Errorf("user %q: %w", p.Name(), err)
