@@ -28,7 +28,12 @@ key_file  = "/etc/authnd/key.pem"
 
 # The service account that may READ. Binding proves who you are; reading
 # everybody is a separate thing to be allowed.
-reader "cn=reader,dc=example,dc=org" { password_file = "/etc/authnd/reader.pw" }
+#
+# A secret is a secretsource reference, never the secret itself:
+# password_from = "systemd-creds:reader", "file:PATH", "keychain:SERVICE/ACCOUNT"...
+# (see "Secrets as references" below). password_file = PATH is the deprecated
+# spelling of password_from = "file:PATH".
+reader "cn=reader,dc=example,dc=org" { password_from = "systemd-creds:reader" }
 
 # People written down here: a service account, or a small site's whole list.
 user "backup" { password_file = "/etc/authnd/backup.pw" }
@@ -57,6 +62,46 @@ people are already in that site's shape.
 Sources are asked in the order they are written and **the first that knows a
 name owns it**, so a service account written down here is not overridden by
 somebody with the same name in the database. Group membership is the union.
+
+## Secrets as references
+
+A `reader` block names its secrets with [secretsource](https://github.com/go-authn/secretsource)
+(v0.9.0) references instead of holding them (`file:` refuses a symlink and a file
+owned by another user than the one authnd runs as; from a credential use
+`systemd-creds:NAME`, never `file:$CREDENTIALS_DIRECTORY/NAME`):
+
+| Field | Meaning |
+|---|---|
+| `password_from` | the reader's password: `systemd-creds:NAME`, `file:PATH` (a regular file readable by its owner alone), `keychain:SERVICE/ACCOUNT`, ... |
+| `totp_secret_from` | the reader's base32 TOTP secret (with `mfa { readers = true }`) |
+| `password_file` | **deprecated**: `password_from = "file:PATH"` |
+| `password`, `totp_secret` | **deprecated**: the secret itself, written in the configuration; logged at startup |
+
+Exactly one of `password_from`, `password_file` and `password` is allowed; a
+secret is one non-empty line of at most 4096 bytes (a trailing newline is
+dropped), and a bad reference stops the server at startup. A reference with no
+scheme is refused: `file:` is how a path is written.
+
+With systemd, seal the secret to the machine and pass it as a credential:
+
+```sh
+printf %s 'the-reader-password' | sudo systemd-creds encrypt --name=reader \
+  --with-key=host+tpm2 - /etc/credstore.encrypted/reader.cred
+# systemctl edit authnd
+#   [Service]
+#   LoadCredentialEncrypted=reader:/etc/credstore.encrypted/reader.cred
+```
+
+Use `--with-key=host+tpm2` and no `--tpm2-pcrs`; a bare `--tpm2-pcrs=7` makes the
+credential unreadable after a firmware or Secure Boot update, and authnd then
+refuses to start. **Recovery:** keep the secret in an offline copy, and re-seal
+it with the command above after a TPM, host-key or firmware change; then
+`systemctl restart authnd`.
+
+The `user` and `users` blocks (`password`, `password_file`, `totp_secret`,
+`nt_hash`, `dsn_file`, `bind_password_file`) are go-authn/directory's `hcldir`
+blocks and keep their own spellings for now; moving them to references is a
+change in that module.
 
 ## The entries it publishes
 

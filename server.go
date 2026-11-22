@@ -155,13 +155,27 @@ func open(cfg *config, out io.Writer) (*server, error) {
 		}}
 	}
 	for _, r := range cfg.Readers {
-		pw, err := secret(r.Password, r.PasswordFile, "reader "+r.DN)
+		who := "reader " + r.DN
+		pw, err := resolveSecret(who, "password", r.Password, r.PasswordFile, r.PasswordFrom)
 		if err != nil {
 			return nil, err
 		}
+		if r.Password != "" {
+			fmt.Fprintf(s.out, "%s: password is a secret written in the configuration (deprecated): use password_from = \"systemd-creds:NAME\" or \"file:PATH\"\n", who)
+		}
+		if r.PasswordFile != "" {
+			fmt.Fprintf(s.out, "%s: password_file is deprecated: use password_from = \"file:%s\"\n", who, r.PasswordFile)
+		}
 		s.readers[strings.ToLower(r.DN)] = pw
+		totpB32, err := resolveSecret(who, "totp_secret", r.TOTPSecret, "", r.TOTPSecretFrom)
+		if err != nil {
+			return nil, err
+		}
 		if r.TOTPSecret != "" {
-			secret, err := directory.ParseTOTPSecret(r.TOTPSecret)
+			fmt.Fprintf(s.out, "%s: totp_secret is a secret written in the configuration (deprecated): use totp_secret_from\n", who)
+		}
+		if totpB32 != "" {
+			secret, err := directory.ParseTOTPSecret(totpB32)
 			if err != nil {
 				return nil, fmt.Errorf("reader %q: %w", r.DN, err)
 			}

@@ -152,12 +152,32 @@ type mfaBlock struct {
 // anybody who can bind has published it.
 type readerBlock struct {
 	// DN is the bind DN, spelled as the client will write it.
-	DN           string `hcl:"dn,label"`
+	DN string `hcl:"dn,label"`
+	// PasswordFrom is a secretsource reference to the password
+	// ("systemd-creds:reader", "file:/etc/authnd/reader.pw"): the way to name
+	// it. Password (the secret itself in this file) and PasswordFile (the
+	// deprecated spelling of password_from = "file:PATH") are still read, and
+	// exactly one of the three is required.
+	PasswordFrom string `hcl:"password_from,optional"`
 	Password     string `hcl:"password,optional"`
 	PasswordFile string `hcl:"password_file,optional"`
-	// TOTPSecret is a one-time-code secret in base32, for a service account
-	// that carries one. Only asked for when the mfa block says readers do.
-	TOTPSecret string `hcl:"totp_secret,optional"`
+	// TOTPSecretFrom is a secretsource reference to a one-time-code secret in
+	// base32, for a service account that carries one; TOTPSecret is the secret
+	// itself in this file (deprecated). Only asked for when the mfa block says
+	// readers do. At most one of the two.
+	TOTPSecretFrom string `hcl:"totp_secret_from,optional"`
+	TOTPSecret     string `hcl:"totp_secret,optional"`
+}
+
+// secretFields counts how many of the given spellings of one secret are set.
+func secretFields(v ...string) int {
+	n := 0
+	for _, s := range v {
+		if s != "" {
+			n++
+		}
+	}
+	return n
 }
 
 // A userBlock is somebody written down here rather than in a directory: a
@@ -317,11 +337,14 @@ func (c *config) check() error {
 		}
 		seen[strings.ToLower(r.DN)] = true
 		switch {
-		case r.Password != "" && r.PasswordFile != "":
-			return fmt.Errorf("reader %q has both a password and a password_file: say which one", r.DN)
-		case r.Password == "" && r.PasswordFile == "":
+		case secretFields(r.Password, r.PasswordFile, r.PasswordFrom) > 1:
+			return fmt.Errorf("reader %q has more than one of password_from, password_file and password: say which one "+
+				"(password_file is the deprecated spelling of password_from = \"file:PATH\")", r.DN)
+		case secretFields(r.Password, r.PasswordFile, r.PasswordFrom) == 0:
 			return fmt.Errorf("reader %q has no password: a reader that proves nothing is anonymous search "+
 				"with extra steps", r.DN)
+		case r.TOTPSecret != "" && r.TOTPSecretFrom != "":
+			return fmt.Errorf("reader %q has both a totp_secret and a totp_secret_from: say which one", r.DN)
 		}
 	}
 
@@ -412,21 +435,6 @@ func loopback(addr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
-}
-
-// secret reads a password from a file, or takes the one written inline.
-//
-// Inline is allowed and file is the shape to use: a file has permissions, and
-// a configuration under version control has none.
-func secret(inline, file, who string) (string, error) {
-	if file == "" {
-		return inline, nil
-	}
-	raw, err := os.ReadFile(file)
-	if err != nil {
-		return "", fmt.Errorf("%s: %w", who, err)
-	}
-	return strings.TrimSpace(string(raw)), nil
 }
 
 // A kerberosBlock turns this server into a KDC for one realm.

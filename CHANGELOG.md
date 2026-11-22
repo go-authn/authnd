@@ -3,6 +3,22 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.20.0 — 2026-11-22
+
+- **A reader's secrets are secretsource references.** `reader` takes
+  `password_from` and `totp_secret_from` (`systemd-creds:NAME`, `file:PATH`,
+  `keychain:...`; go-authn/secretsource v0.9.0 (`file:` refuses symlinks and files owned by another uid), one non-empty line, 4096 bytes
+  at most). `password_file` is a **deprecated** alias of
+  `password_from = "file:PATH"`, so the file now has to be readable by its owner
+  alone (secretsource's rule) and a relative path is as before; `password` and
+  `totp_secret` (the secret written in the configuration) still work and are
+  logged at startup as deprecated. More than one of `password_from`,
+  `password_file` and `password` is a configuration error, and so are
+  `totp_secret` with `totp_secret_from`. The `user`/`users` blocks belong to
+  go-authn/directory's `hcldir` and are not changed here. The README, the
+  install guide and the unit show `LoadCredentialEncrypted=` with
+  `--with-key=host+tpm2` and the re-seal recovery path.
+
 ## v0.19.0 — 2026-11-22
 
 - **Names that differ only by case or insignificant space are one person across
