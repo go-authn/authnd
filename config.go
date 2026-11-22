@@ -355,8 +355,16 @@ func (c *config) check() error {
 		}
 		people[u.Name] = true
 		switch {
-		case u.Password != "" && u.PasswordFile != "":
-			return fmt.Errorf("user %q has both a password and a password_file: say which one", u.Name)
+		case (u.Password != "" && u.PasswordFile != "") || (u.Password != "" && u.PasswordFrom != "") || (u.PasswordFile != "" && u.PasswordFrom != ""):
+			return fmt.Errorf("user %q has more than one of password_from, password_file and password: say which one "+
+				"(password_file is the deprecated spelling of password_from = \"file:PATH\")", u.Name)
+		case u.NTHash != "" && u.NTHashFrom != "":
+			return fmt.Errorf("user %q has both an nt_hash and an nt_hash_from: say which one", u.Name)
+		case u.TOTPSecret != "" && u.TOTPSecretFrom != "":
+			return fmt.Errorf("user %q has both a totp_secret and a totp_secret_from: say which one", u.Name)
+		case u.NTHashFrom != "" && (u.Password != "" || u.PasswordFile != "" || u.PasswordFrom != ""):
+			return fmt.Errorf("user %q has both a password and an nt_hash_from: the hash is derived from the password, "+
+				"so two of them can disagree", u.Name)
 		case u.Password != "" && u.NTHash != "":
 			return fmt.Errorf("user %q has both a password and an nt_hash: the hash is derived from the password, "+
 				"so two of them can disagree", u.Name)

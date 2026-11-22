@@ -218,6 +218,7 @@ func newUpstream(t testing.TB, extra string) *upstreamFixture {
 	if err := os.WriteFile(pw, []byte(d.ReaderPassword), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	ownerOnly(t, pw)
 	body := fmt.Sprintf(`
 listen  = "127.0.0.1:0"
 base_dn = "dc=example,dc=org"

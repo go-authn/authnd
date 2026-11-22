@@ -268,6 +268,9 @@ func sourceNames(blocks []hcldir.Block) string {
 			name += " " + b.Driver
 			if b.DSNFile != "" {
 				name += " (dsn_file " + b.DSNFile + ")"
+			} else if b.DSNFrom != "" {
+				// A reference names where the DSN is held, never the DSN.
+				name += " (dsn_from " + b.DSNFrom + ")"
 			}
 		}
 		parts = append(parts, name)

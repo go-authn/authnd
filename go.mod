@@ -4,7 +4,7 @@ go 1.27.4
 
 require (
 	github.com/go-asn1-ber/asn1-ber v1.5.8
-	github.com/go-authn/directory v0.26.0
+	github.com/go-authn/directory v0.27.0
 	github.com/go-authn/kdc v0.6.0
 	github.com/go-authn/ldap v0.15.0
 	github.com/go-authn/mfa v0.5.1
@@ -17,6 +17,7 @@ require (
 	github.com/jcmturner/gokrb5/v8 v8.4.4
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
+	golang.org/x/sys v0.50.0
 	modernc.org/sqlite v1.61.1
 )
 
@@ -55,7 +56,6 @@ require (
 	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect
-	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/text v0.44.0 // indirect
 	golang.org/x/tools v0.52.0 // indirect
 	modernc.org/libc v1.79.0 // indirect

@@ -102,6 +102,7 @@ func write(t testing.TB, dir, name, body string) string {
 	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	ownerOnly(t, p)
 	return p
 }
 
