@@ -109,7 +109,7 @@ These keys apply to every configuration:
 |---|---|---|---|
 | `base_dn` | **yes** | | the root of the tree, e.g. `dc=example,dc=org`. People are under `ou=people`, groups under `ou=groups`. |
 | `listen` | no | `127.0.0.1:3893` | one address. `0.0.0.0:389` for LDAP, `0.0.0.0:636` for LDAPS. A site that needs both runs two instances, each with its own `--config`. |
-| `reader "<dn>"` | no | | a service account that may **search**, with `password` or `password_file`. Without one, nothing may search: a bind is not permission to read everybody. |
+| `reader "<dn>"` | no | | a service account that may **search**, with `password_from` (a secretsource reference such as `systemd-creds:reader` or `file:PATH`; `password_file` and `password` are deprecated). Without one, nothing may search: a bind is not permission to read everybody. |
 | at least one person | **yes** | | a `user` block or a `users` block: authnd refuses to start with nobody to serve. |
 
 Before every restart:
@@ -129,13 +129,30 @@ prove, without listening and without printing a secret.
 listen  = "0.0.0.0:389"
 base_dn = "dc=example,dc=org"
 
-reader "cn=reader,dc=example,dc=org" { password_file = "/etc/authnd/reader.pw" }
+reader "cn=reader,dc=example,dc=org" { password_from = "systemd-creds:reader" }
 
 user "alice" { password_file = "/etc/authnd/passwords/alice.pw" }
 user "bob"   { password_file = "/etc/authnd/passwords/bob.pw" }
 
 group "staff" { members = ["alice", "bob"] }
 ```
+
+The reader's password is a credential sealed to the machine:
+
+```sh
+printf %s 'the-reader-password' | sudo systemd-creds encrypt --name=reader \
+  --with-key=host+tpm2 - /etc/credstore.encrypted/reader.cred
+sudo systemctl edit authnd     # [Service]
+                               # LoadCredentialEncrypted=reader:/etc/credstore.encrypted/reader.cred
+```
+
+Seal with `--with-key=host+tpm2` and no `--tpm2-pcrs`: a bare `--tpm2-pcrs=7`
+makes every credential unreadable after a firmware or Secure Boot update, and
+authnd then refuses to start. **Recovery:** keep the password in an offline
+copy; after a TPM, host-key (`/var/lib/systemd/credential.secret`) or firmware
+change, run the `systemd-creds encrypt` command again from that copy and
+`systemctl restart authnd`. `totp_secret_from` does the same for a reader's
+TOTP secret.
 
 A `user` block takes `password` or `password_file` (not both), or `nt_hash`
 (MD4 of the UTF-16LE password, 32 hex digits) instead of a password, and

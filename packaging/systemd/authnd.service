@@ -39,6 +39,12 @@ Type=exec
 ExecStart=/usr/local/bin/authnd --config /etc/authnd
 Restart=on-failure
 RestartSec=5s
+# A reader's password is a credential, not a line of the configuration: seal it
+# with `systemd-creds encrypt --name=reader --with-key=host+tpm2 ...` (never a
+# bare --tpm2-pcrs=7), uncomment the line and write
+# `password_from = "systemd-creds:reader"` in the reader block. If a firmware
+# or TPM change makes it unreadable, re-seal it from your offline copy.
+#LoadCredentialEncrypted=reader:/etc/credstore.encrypted/reader.cred
 
 User=authnd
 Group=authnd
