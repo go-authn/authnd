@@ -7,7 +7,7 @@ are described in their pull requests and release notes.
 
 - **A reader's secrets are secretsource references.** `reader` takes
   `password_from` and `totp_secret_from` (`systemd-creds:NAME`, `file:PATH`,
-  `keychain:...`; go-authn/secretsource v0.8.0, one non-empty line, 4096 bytes
+  `keychain:...`; go-authn/secretsource v0.9.0 (`file:` refuses symlinks and files owned by another uid), one non-empty line, 4096 bytes
   at most). `password_file` is a **deprecated** alias of
   `password_from = "file:PATH"`, so the file now has to be readable by its owner
   alone (secretsource's rule) and a relative path is as before; `password` and

@@ -66,7 +66,9 @@ somebody with the same name in the database. Group membership is the union.
 ## Secrets as references
 
 A `reader` block names its secrets with [secretsource](https://github.com/go-authn/secretsource)
-(v0.8.0) references instead of holding them:
+(v0.9.0) references instead of holding them (`file:` refuses a symlink and a file
+owned by another user than the one authnd runs as; from a credential use
+`systemd-creds:NAME`, never `file:$CREDENTIALS_DIRECTORY/NAME`):
 
 | Field | Meaning |
 |---|---|
