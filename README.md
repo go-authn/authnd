@@ -98,10 +98,14 @@ refuses to start. **Recovery:** keep the secret in an offline copy, and re-seal
 it with the command above after a TPM, host-key or firmware change; then
 `systemctl restart authnd`.
 
-The `user` and `users` blocks (`password`, `password_file`, `totp_secret`,
-`nt_hash`, `dsn_file`, `bind_password_file`) are go-authn/directory's `hcldir`
-blocks and keep their own spellings for now; moving them to references is a
-change in that module.
+The `user` and `users` blocks are go-authn/directory's `hcldir` blocks (v0.27.0)
+and take the same references: `password_from`, `totp_secret_from` and
+`nt_hash_from` on a `user` (`nt_hash_from` adds no NT-hash capability: it is the
+hash read from a reference instead of the configuration, and is refused beside a
+password), `dsn_from` and `bind_password_from` on a `users` block. `password_file`,
+`dsn_file`, `bind_password_file` and the inline `password`, `nt_hash`,
+`totp_secret` are **deprecated** aliases, still accepted and logged at startup
+(never with the secret). At most one spelling of a secret is allowed.
 
 ## The entries it publishes
 

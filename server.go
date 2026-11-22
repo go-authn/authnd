@@ -186,6 +186,20 @@ func open(cfg *config, out io.Writer) (*server, error) {
 		}
 	}
 
+	// The user and users blocks name their secrets as hcldir's references too;
+	// what is still written the old way is said once at startup, as the
+	// readers' is above. The notices hold names and paths, never a secret.
+	for _, u := range cfg.Users {
+		for _, d := range u.Deprecations() {
+			fmt.Fprintln(s.out, d)
+		}
+	}
+	for _, b := range cfg.Directories {
+		for _, d := range b.Deprecations() {
+			fmt.Fprintln(s.out, d)
+		}
+	}
+
 	// Discovery happens here, before anything listens: a provider that
 	// cannot be reached should stop a server from starting, where somebody
 	// is watching, rather than refuse every bind later.
@@ -252,6 +266,20 @@ func localSource(cfg *config) (*directory.Static, error) {
 		// version that changed that would break the password write, which
 		// swaps this source whole, so it is refused here rather than there.
 		return nil, fmt.Errorf("hcldir.File returned %T, not a *directory.Static", src)
+	}
+	// A totp_secret_from is resolved by hcldir.File, after loadConfig's own
+	// check of an inline totp_secret, so the length rule runs here on what
+	// every spelling produced.
+	people, err := static.Identities()
+	if err != nil {
+		return nil, err
+	}
+	for _, p := range people {
+		if secret := p.TOTPSecret(); secret != nil {
+			if err := secretLongEnough(secret); err != nil {
+				return nil, fmt.Errorf("user %q: %w", p.Name(), err)
+			}
+		}
 	}
 	return static, nil
 }

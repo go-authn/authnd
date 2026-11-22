@@ -3,6 +3,16 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## Unreleased
+
+- **`user` and `users` blocks take secretsource references** (go-authn/directory
+  v0.27.0): `password_from`, `totp_secret_from`, `nt_hash_from`, `dsn_from`,
+  `bind_password_from`. The inline values and the `*_file` spellings are
+  deprecated, still work, and are logged at startup without the secret.
+  **Behaviour change:** `password_file`, `dsn_file` and `bind_password_file` now
+  go through `file:`, which refuses a symlink, a file owned by another user and
+  one over 4096 bytes or more than one line.
+
 ## v0.20.0 — 2026-11-22
 
 - **A reader's secrets are secretsource references.** `reader` takes
