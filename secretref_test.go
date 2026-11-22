@@ -129,6 +129,9 @@ func TestReaderTOTPSecretFromResolves(t *testing.T) {
 	if len(srv.readerSecrets[strings.ToLower(readerDN)]) == 0 {
 		t.Error("the reader's TOTP secret was not read from its reference")
 	}
+	if _, err := openReader(t, fmt.Sprintf("password_from = %q\ntotp_secret_from = %q", "file:"+pw, "file:"+filepath.Join(dir, "absent"))); err == nil || !strings.Contains(err.Error(), "totp_secret_from") {
+		t.Errorf("an unresolvable totp_secret_from gave %v", err)
+	}
 	short := secretFile(t, dir, "short", []byte("JBSWY3DPEHPK3PXP"))
 	if _, err := openReader(t, fmt.Sprintf("password_from = %q\ntotp_secret_from = %q", "file:"+pw, "file:"+short)); err == nil || !strings.Contains(err.Error(), "bits") {
 		t.Errorf("a short TOTP secret gave %v", err)
