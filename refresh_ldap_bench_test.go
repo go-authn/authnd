@@ -50,6 +50,7 @@ func BenchmarkRefreshLDAP10k2k(b *testing.B) {
 	if err := os.WriteFile(pw, []byte(up.ReaderPassword), 0o600); err != nil {
 		b.Fatal(err)
 	}
+	ownerOnly(b, pw)
 	r := start(b, fmt.Sprintf(`
 listen  = "127.0.0.1:0"
 base_dn = "dc=example,dc=org"
