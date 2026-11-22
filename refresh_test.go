@@ -449,9 +449,10 @@ users "sql" {
 func TestReadFailsWhenASourceDoes(t *testing.T) {
 	r, _, _, _ := refreshing(t, "")
 	good := r.srv.snap.Load()
-	// Two people whose names differ only by case.
-	r.srv.dir.Add(&directory.Static{Name: "a clash", People: []*directory.Identity{directory.NewIdentity("DORA")}})
-	if _, err := r.srv.read(); err == nil || !strings.Contains(err.Error(), "differ only by case") {
+	// Two people of one source whose names differ only by case (across
+	// sources the later one is shadowed instead: TestShadowedSpelling...).
+	r.srv.dir.Add(&directory.Static{Name: "a clash", People: []*directory.Identity{directory.NewIdentity("DORA"), directory.NewIdentity("dora")}})
+	if _, err := r.srv.read(); err == nil || !strings.Contains(err.Error(), "more than one entry") {
 		t.Fatalf("a name clash: %v", err)
 	}
 	// A source that cannot list its groups.

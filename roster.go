@@ -32,10 +32,11 @@ type roster struct {
 // 2.39, caseIgnoreMatch); go-authn/ldap's EqualDN does the same. A map keyed
 // by the exact bytes holds "Backup" and "backup" as two people while every DN
 // comparison says they are one, and that disagreement is what let one rewrite
-// the other's password. go-authn/directory's "first source owns a name"
-// compares bytes too, so both arrive here. Choosing one of them silently would
-// be a guess about which person a site meant; refusing to start is the answer
-// somebody is there to read.
+// the other's password. Since go-authn/directory v0.26.0 the Set resolves such
+// names itself (one source holding both is ErrAmbiguous, across sources the
+// first owns the person and the later spelling is logged as shadowed); this
+// check stays as the second line, for the folds EqualFold makes that
+// caseIgnoreMatch does not.
 func newRoster(ids []*directory.Identity, local ...*directory.Identity) (*roster, error) {
 	r := &roster{byName: map[string]*directory.Identity{}, local: map[string]bool{}}
 	folded := map[string]*directory.Identity{}
