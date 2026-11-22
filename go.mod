@@ -4,7 +4,7 @@ go 1.27.4
 
 require (
 	github.com/go-asn1-ber/asn1-ber v1.5.8
-	github.com/go-authn/directory v0.26.1-0.20261122192002-2b2e28785c8b
+	github.com/go-authn/directory v0.27.0
 	github.com/go-authn/kdc v0.6.0
 	github.com/go-authn/ldap v0.15.0
 	github.com/go-authn/mfa v0.5.1
