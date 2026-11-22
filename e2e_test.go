@@ -319,7 +319,7 @@ user "filed" { password_file = "/no/such/password" }
 	if srv != nil {
 		srv.Close()
 	}
-	if err == nil || !strings.Contains(err.Error(), "user filed") {
+	if err == nil || !strings.Contains(err.Error(), `"filed"`) || !strings.Contains(err.Error(), "/no/such/password") {
 		t.Errorf("a password file that is not there gave %v", err)
 	}
 }

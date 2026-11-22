@@ -84,6 +84,43 @@ func TestConfigurationsThatCannotWork(t *testing.T) {
 			"say which one",
 		},
 		{
+			"a password_from and a password at once",
+			`base_dn = "dc=example,dc=org"
+			 user "svc" {
+			   password      = "x"
+			   password_from = "file:/etc/passwords/svc"
+			 }`,
+			"more than one of password_from, password_file and password",
+		},
+		{
+			"an nt_hash_from and a password_from at once",
+			`base_dn = "dc=example,dc=org"
+			 user "svc" {
+			   password_from = "file:/etc/passwords/svc"
+			   nt_hash_from  = "file:/etc/passwords/svc.nt"
+			 }`,
+			"the hash is derived from the password",
+		},
+		{
+			"an nt_hash and an nt_hash_from at once",
+			`base_dn = "dc=example,dc=org"
+			 user "svc" {
+			   nt_hash      = "8846f7eaee8fb117ad06bdd830b7586c"
+			   nt_hash_from = "file:/etc/passwords/svc.nt"
+			 }`,
+			"both an nt_hash and an nt_hash_from",
+		},
+		{
+			"a totp_secret and a totp_secret_from at once",
+			`base_dn = "dc=example,dc=org"
+			 user "svc" {
+			   password         = "x"
+			   totp_secret      = "JBSWY3DPEHPK3PXP"
+			   totp_secret_from = "file:/etc/passwords/svc.totp"
+			 }`,
+			"both a totp_secret and a totp_secret_from",
+		},
+		{
 			"a group with nobody in it",
 			`base_dn = "dc=example,dc=org"
 			 user "svc" { password = "x" }
