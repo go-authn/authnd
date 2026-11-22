@@ -3,6 +3,20 @@
 Changes that a deployment has to know about, newest first. Earlier releases
 are described in their pull requests and release notes.
 
+## v0.19.0 — 2026-11-22
+
+- **Names that differ only by case or insignificant space are one person across
+  sources.** Needs go-authn/directory v0.26.0 (also go-authn/ldap v0.15.0): a
+  `Set` now compares names by the LDAP equality rule of uid (`caseIgnoreMatch`),
+  as `ldapdir` already did inside one source. Before, "Alice" in a later source
+  and "alice" in an earlier one were two people; now the first source owns the
+  person and the later spelling is left out (the person keeps the owning
+  source's spelling). A name with no equivalence key (not UTF-8, empty or all
+  spaces) makes startup and refresh fail instead of being compared as bytes.
+- **The shadowing is logged.** At startup, and on a refresh when the list
+  changes, `directory: names shadowed by a spelling an earlier source owns`
+  names each shadowed spelling, its source, and the owner.
+
 ## v0.18.7 — 2026-11-21
 
 - **Anonymous slow binds can no longer make every bind on a source answer

@@ -158,6 +158,7 @@ func (s *server) read() (*snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.noteShadowed()
 	people, err := newRoster(ids, s.local.p.Load().People...)
 	if err != nil {
 		return nil, err
@@ -307,6 +308,27 @@ func (s *server) reportLeftOut(before, now *snapshot) {
 		return
 	}
 	fmt.Fprintf(s.out, "refresh: what is held back changed:\n%s\n", b)
+}
+
+// noteShadowed says which people a later source named with another spelling
+// of a name an earlier source owns (directory v0.26.0: names are one person
+// by the LDAP rule for uid), when that list changed.
+func (s *server) noteShadowed() {
+	var b strings.Builder
+	for _, sh := range s.dir.Shadowed() {
+		fmt.Fprintf(&b, "  %q of %s is the same person as %q of %s, which owns it\n", sh.Name, sh.Source, sh.Owner, sh.By)
+	}
+	s.mu.Lock()
+	same := s.shadows == b.String()
+	s.shadows = b.String()
+	s.mu.Unlock()
+	switch {
+	case same:
+	case b.Len() == 0:
+		fmt.Fprintln(s.out, "directory: no name is shadowed by another spelling any more")
+	default:
+		fmt.Fprintf(s.out, "directory: names shadowed by a spelling an earlier source owns:\n%s", b.String())
+	}
 }
 
 // noteRefresh says a failure once per streak, and when it ends.

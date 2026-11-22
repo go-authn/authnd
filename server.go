@@ -95,6 +95,7 @@ type server struct {
 	realm *realm
 
 	mu      sync.Mutex
+	shadows string // the last list reported by noteShadowed, under mu
 	binds   int
 	serving bool
 	closed  bool
@@ -203,6 +204,7 @@ func open(cfg *config, out io.Writer) (*server, error) {
 		if err != nil {
 			return err
 		}
+		s.noteShadowed()
 		if people, err = newRoster(ids, local.People...); err != nil {
 			return err
 		}

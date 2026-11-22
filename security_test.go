@@ -54,7 +54,8 @@ user "Backup" { password = "another-secret" }
 		srv.Close()
 		t.Fatal("two people whose names differ only by case were both served")
 	}
-	contains(t, err.Error(), `"backup"`, `"Backup"`, "case")
+	// directory v0.26.0 refuses it first: one source holding one class twice.
+	contains(t, err.Error(), "Backup", "more than one entry")
 }
 
 // ⛔ A password is changed by the identity that bound, and by no other.
