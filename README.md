@@ -916,7 +916,9 @@ A `kerberos` block makes this a KDC as well as a directory, through
 [go-authn/kdc](https://github.com/go-authn/kdc): the same people are issued
 tickets instead of only being looked up. Startup refuses a realm with no name,
 one not in capitals, no keytab, or a keytab without `krbtgt/REALM`, and, as
-said above, a `kerberos` block beside an `mfa` block.
+said above, a `kerberos` block beside an `mfa` block. The block is the explicit
+opt-in to password-derived authentication: authnd sets kdc's
+`AllowPasswordDerivedAS`, which kdc leaves off by default.
 
 A KDC needs the person's **password**, not only a way to check one, so a
 person whose source only verifies (an LDAP directory behind this one) can never

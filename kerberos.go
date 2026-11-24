@@ -41,8 +41,12 @@ func (s *server) openRealm() (*realm, error) {
 		Realm:    k.Realm,
 		People:   realmPeople{s},
 		Services: kt,
-		Lifetime: k.lifetime(),
-		Logf:     func(format string, a ...any) { fmt.Fprintf(s.out, "kerberos: "+format+"\n", a...) },
+		// ⛔ The `kerberos` block is the explicit opt-in. This realm answers AS-REQs
+		// with keys derived from the passwords in its snapshot (string-to-key), by
+		// design; kdc v0.11.0 refuses that unless asked (go-authn/kdc#41).
+		AllowPasswordDerivedAS: true,
+		Lifetime:               k.lifetime(),
+		Logf:                   func(format string, a ...any) { fmt.Fprintf(s.out, "kerberos: "+format+"\n", a...) },
 	})
 	if err != nil {
 		return nil, err

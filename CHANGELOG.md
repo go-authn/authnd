@@ -5,6 +5,10 @@ are described in their pull requests and release notes.
 
 ## Unreleased
 
+- **go-authn/kdc v0.6.0 to v0.11.0**: kdc now refuses an AS-REQ for a person
+  holding a password unless `Config.AllowPasswordDerivedAS` is set
+  (go-authn/kdc#41). authnd sets it: a `kerberos` block is the explicit opt-in
+  to deriving keys from passwords, as it always was. No configuration change.
 - **`user` and `users` blocks take secretsource references** (go-authn/directory
   v0.27.0): `password_from`, `totp_secret_from`, `nt_hash_from`, `dsn_from`,
   `bind_password_from`. The inline values and the `*_file` spellings are
